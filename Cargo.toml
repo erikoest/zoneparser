@@ -8,13 +8,14 @@ authors = ["Erik Østlyngen <erik.ostlyngen@norid.no>"]
 categories = ["network-programming"]
 keywords = ["DNS", "BIND", "named"]
 repository = "https://github.com/erikoest/zoneparser"
+description = "A fast zonefile parser"
 
 [package.metadata.deb]
 maintainer = "Erik Østlyngen <erik.ostlyngen@norid.no>"
 copyright = "2024, Erik Østlyngen"
 license-file = ["LICENSE", "5"]
 extended-description = """\
-A fast zonefile parser."""
+A fast zonefile parser"""
 depends = "$auto"
 section = "utility"
 priority = "optional"
