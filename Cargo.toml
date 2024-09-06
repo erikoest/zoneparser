@@ -1,0 +1,30 @@
+[package]
+name = "zoneparser"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+readme = "README.md"
+authors = ["Erik Østlyngen <erik.ostlyngen@norid.no>"]
+categories = ["network-programming"]
+keywords = ["DNS", "BIND", "named"]
+repository = "https://github.com/erikoest/zoneparser"
+
+[package.metadata.deb]
+maintainer = "Erik Østlyngen <erik.ostlyngen@norid.no>"
+copyright = "2024, Erik Østlyngen"
+license-file = ["LICENSE", "5"]
+extended-description = """\
+A fast zonefile parser."""
+depends = "$auto"
+section = "utility"
+priority = "optional"
+assets = [
+    ["target/release/zonediff", "usr/bin/", "755"],
+    ["target/release/zonecount", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/zoneparser/README", "644"],
+]
+
+[dependencies]
+bstr = "1.10.0"
+strum = "0.26.3"
+strum_macros = "0.26.4"
