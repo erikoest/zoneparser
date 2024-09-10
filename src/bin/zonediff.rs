@@ -4,27 +4,23 @@ use std::fs::File;
 use std::env;
 use std::cmp::Ordering;
     
-use zoneparser::{ZoneParser, Record};
+use zoneparser::{ZoneParser, Record, RecordData, RRType};
 
-/* Compare the records of two zones. The zone records are expected to be
-sorted on domain names. The exception is the apex records which is
+/* Compare the records of two zones. The zone records are expected to
+be sorted on domain names. The exception is the apex records which is
 expected to be found at the start. 
 */
-struct SetIterator<'a> {
-    parser: ZoneParser<'a>,
-    next: Option<Record>,
-    set: Vec<Record>,
-}
+struct SetIterator<'a> { parser: ZoneParser<'a>, next: Option<Record>,
+    set: Vec<Record>, }
 
-/* Iterator which gets rrset on each iteration. In a strict sense, this struct is not
-an iterator (it does not implement the iterator trait). Also, it does not return the
-next item. Rather, it keeps it until the next iteration step is performed.
+/* Iterator which gets rrset on each iteration. In a strict sense,
+this struct is not an iterator (it does not implement the iterator
+trait). Also, it does not return the next item. Rather, it keeps it
+until the next iteration step is performed.
 */
-impl<'a> SetIterator<'a> {
-    fn new(file: &'a File) -> Self {
-	let mut parser = ZoneParser::new(&file);
-	let next = parser.next();
-	let set: Vec<Record> = vec!();
+impl<'a> SetIterator<'a> { fn new(file: &'a File) -> Self { let mut
+    parser = ZoneParser::new(&file); let next = parser.next(); let
+    set: Vec<Record> = vec!();
 
 	Self {
 	    parser: parser,
@@ -47,14 +43,26 @@ impl<'a> SetIterator<'a> {
 	return self.set.is_empty();
     }
 
-    fn sets_differ(&self, other: &'a SetIterator<'a>) -> bool {
+    fn sets_differ(&self, other: &'a SetIterator<'a>,
+		   ignore_serial: bool) -> bool {
 	if self.set.len() != other.set.len() {
 	    return true;
 	}
 
 	for i in 0..self.set.len() {
-	    if self.set[i] != other.set[i] {
-		return true;
+	    if self.set[i].rrtype == RRType::SOA && ignore_serial {
+		let mut this = self.set[i].clone();
+		let mut that = self.set[i].clone();
+		this.data[2] = RecordData::new("");
+		that.data[2] = RecordData::new("");
+		if this != that {
+		    return true;
+		}
+	    }
+	    else {
+		if self.set[i] != other.set[i] {
+		    return true;
+		}
 	    }
 	}
 
@@ -86,6 +94,7 @@ impl<'a> SetIterator<'a> {
 struct Differ<'a> {
     old: SetIterator<'a>,
     new: SetIterator<'a>,
+    ignore_serial: bool,
     verbose: bool,
     added: usize,
     removed: usize,
@@ -93,13 +102,15 @@ struct Differ<'a> {
 }
 
 impl<'a> Differ<'a> {
-    fn new(oldfile: &'a File, newfile: &'a File, verbose: bool) -> Self {
+    fn new(oldfile: &'a File, newfile: &'a File, ignore_serial: bool,
+	   verbose: bool) -> Self {
 	let old = SetIterator::new(&oldfile);
 	let new = SetIterator::new(&newfile);
 	
 	Self {
 	    old: old,
 	    new: new,
+	    ignore_serial: ignore_serial,
 	    verbose: verbose,
 	    added: 0,
 	    removed: 0,
@@ -149,7 +160,9 @@ impl<'a> Differ<'a> {
 	    },
 	    Ordering::Equal => {
 		// Sets have the same name. Compare all records
-		if self.old.sets_differ(&self.new) {
+		// Diff each set of equal RRTtypes. Option to diff by single
+		// records.
+		if self.old.sets_differ(&self.new, self.ignore_serial) {
 		    if self.verbose {
 			self.old.print_set("~-");
 			self.new.print_set("~+");
@@ -181,11 +194,16 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     let mut verbose = false;
+    let mut ignore_serial = false;
 
-    let mut arg_count = 0;
+    let mut arg_count = 1;
 
     loop {
 	match args[arg_count].as_str() {
+	    "-s" | "--ignore-serial" => {
+		arg_count += 1;
+		ignore_serial = true;
+	    },
 	    "-v" | "--verbose" => {
 		arg_count += 1;
 		verbose = true;
@@ -194,15 +212,15 @@ fn main() {
 	}
     }
     
-    if args.len() < 3 + arg_count {
-        println!("Usage: zonediff [-v] <old zonefile> <new zonefile>");
+    if args.len() < 2 + arg_count {
+        println!("Usage: zonediff [-s] [-v] <old zonefile> <new zonefile>");
         return;
     }
 
-    let oldfile = File::open(&args[1]).unwrap();
-    let newfile = File::open(&args[2]).unwrap();
+    let oldfile = File::open(&args[arg_count]).unwrap();
+    let newfile = File::open(&args[arg_count + 1]).unwrap();
 
-    let mut differ = Differ::new(&oldfile, &newfile, verbose);
+    let mut differ = Differ::new(&oldfile, &newfile, ignore_serial, verbose);
     differ.diff();
 
     println!("added: {}", differ.added);
