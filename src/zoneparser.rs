@@ -82,6 +82,7 @@ impl Display for RRType {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct RecordData {
     data: String,
 }
@@ -112,6 +113,7 @@ impl Display for RecordData {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Record {
     pub name: String,
     pub ttl: u32,
@@ -164,13 +166,6 @@ impl Record {
 	}
     }
 
-    pub fn set(&mut self, name: &str, ttl: u32, class: RRClass , rrtype: RRType) {
-	self.name = name.to_string();
-	self.ttl = ttl;
-	self.class = class;
-	self.rrtype = rrtype;
-    }
-    
     pub fn push_data(&mut self, data: RecordData) {
 	self.data.push(data)
     }
@@ -180,6 +175,7 @@ impl Record {
 enum ParserState {
     #[default]
     Init,
+    Common,
     Directive,
     Data,
     QString,
@@ -280,7 +276,8 @@ impl<'a> ZoneParser<'a> {
 
     fn parse_line(&mut self, rec: &mut Option<Record>) {
 	let mut line: String = "".to_string();
-	let len = self.bufreader.read_line(&mut line).expect("Error reading zonefile");
+	let len = self.bufreader.read_line(&mut line).
+	    expect("Error reading zonefile");
 	if len == 0 {
 	    self.end_of_stream = true;
 	    return;
@@ -289,10 +286,9 @@ impl<'a> ZoneParser<'a> {
 	let mut pos = 0;
 	self.line_no += 1;
 
-	for part in bytes.split_inclusive(|&b| b == b' ' || b == b'\t' || b == b'\n' ||
-					  b == b'(' || b == b')') {
-	    // FIXME: Decode \DDD -> octal byte, and \X -> byte? What happens if we don't?
-
+	for part in bytes.split_inclusive(
+	    |&b| b == b' ' || b == b'\t' || b == b'\n' ||
+		 b == b'(' || b == b')') {
 	    let plen = part.len();
 	    let mut wlen = plen;
 
@@ -317,30 +313,38 @@ impl<'a> ZoneParser<'a> {
 		_ => { },
 	    }
 
-	    if wlen == 0 {
-		// Single whitespace or bracket. Skip it
+	    if wlen == 0 && (part[0] == b'\n' || self.state != ParserState::Init) {
+		// Single whitespace, bracket or single newline. Skip it
 		continue;
 	    }
 
 	    match self.state {
 		ParserState::Init => {
-		    // FIXME: Is it possible to do this conversion in one step?
-		    let word = part[0..wlen].escape_bytes().to_string().to_lowercase();
+		    let word = part[0..wlen].escape_bytes().to_string()
+			.to_lowercase();
 		    // Parse the common part of the record
 		    if pos == 0 && self.b_count == 0 {
 			// Start of record. Expect word to be the domain name
-			if wlen != 0 {
-			    if word.starts_with('$') {
-				// Lines starting with $ is a directive
-				self.directive_buf = word;
-				self.state = ParserState::Directive;
-			    }
-			    else {
+			if word.starts_with('$') {
+			    // Lines starting with $ is a directive
+			    self.directive_buf = word;
+			    self.state = ParserState::Directive;
+			}
+			else {
+			    // If the name is empty, use the name from
+			    // the last record
+			    if wlen > 0 {
 				self.name = word;
 			    }
+
+			    self.state = ParserState::Common;
 			}
 		    }
-		    else if let Some(class) = self.rrclass_hash.get(&word) {
+		},
+		ParserState::Common => {
+		    let word = part[0..wlen].escape_bytes().to_string()
+			.to_lowercase();
+		    if let Some(class) = self.rrclass_hash.get(&word) {
 			// Found class.
 			self.class = *class;
 		    }
@@ -348,17 +352,19 @@ impl<'a> ZoneParser<'a> {
 			// Found type. Create a record
 			self.rrtype = *rrtype;
 			self.state = ParserState::Data;
-			let _ = rec.insert(Record::new(&self.name, self.ttl, self.class, self.rrtype));
+			let _ = rec.insert(
+			    Record::new(&self.name, self.ttl,
+					self.class, self.rrtype));
 		    }
 		    else {
 			// Expect TTL
 			self.ttl = word.parse().unwrap();
 		    }
-
 		},
 		ParserState::Directive => {
 		    // Parsing a directive line.
-		    let value = part[0..wlen].escape_bytes().to_string().to_lowercase();
+		    let value = part[0..wlen].escape_bytes().to_string().
+			to_lowercase();
 		    if self.directive_buf == "$ttl" {
 			self.default_ttl = value.parse().unwrap();
 		    }
@@ -373,19 +379,23 @@ impl<'a> ZoneParser<'a> {
 		ParserState::Data => {
 		    if part[0] == b'"' {
 			// Start of quoted string.
-			// FIXME: Check the string for escaped chars, erroneous quotes and other errors
+			// FIXME: Check the string for escaped chars,
+			//        erroneous quotes and other errors
 			if part[wlen - 1] == b'"' {
 			    // Got end quote
-			    rec.as_mut().unwrap().push_data(RecordData::from_bytes(&part[1..wlen - 1]));
+			    rec.as_mut().unwrap().push_data(
+				RecordData::from_bytes(&part[1..wlen - 1]));
 			}
 			else {
 			    self.state = ParserState::QString;
-			    self.quoted_buf = part[1..wlen].escape_bytes().to_string();
+			    self.quoted_buf = format!(
+				"{}{}", &part[1..wlen].escape_bytes(), part[wlen] as char);
 			}
 		    }
 		    else {
 			// Unquoted data
-			rec.as_mut().unwrap().push_data(RecordData::from_bytes(&part[1..wlen]));
+			rec.as_mut().unwrap().push_data(
+			    RecordData::from_bytes(&part[0..wlen]));
 		    }
 		},
 		ParserState::QString => {
@@ -394,12 +404,13 @@ impl<'a> ZoneParser<'a> {
 			// Got end quote
 			let s = &part[0..wlen - 1].escape_bytes().to_string();
 			self.quoted_buf.push_str(s);
-			rec.as_mut().unwrap().push_data(RecordData::new(&self.quoted_buf));
+			rec.as_mut().unwrap().push_data(
+			    RecordData::new(&self.quoted_buf));
 			self.state = ParserState::Data;
 		    }
 		    else {
-			// No end quote. Just concatenate the whole part. We expect the next
-			// word to continue the string.
+			// No end quote. Just concatenate the whole part. We
+			// expect the next word to continue the string.
 			let s = part.escape_bytes().to_string();
 			self.quoted_buf.push_str(&s);
 		    }
@@ -408,5 +419,169 @@ impl<'a> ZoneParser<'a> {
 
 	    pos += plen;
 	}
+    }
+
+    pub fn absolute_name(&self, name: &str) -> String {
+	assert!(name != "");
+
+	if name == "@" {
+	    return self.origin.clone();
+	}
+
+	if name.ends_with('.') {
+	    return name.to_string();
+	}
+	else {
+	    return format!("{}.{}", name, self.origin);
+	}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+    use crate::zoneparser::{ZoneParser, Record, RecordData, RRClass, RRType};
+
+    impl Record {
+	pub fn new_with_data(name: &str, ttl: u32, class: RRClass ,
+			     rrtype: RRType, data: Vec<&str>) -> Self {
+	    let recorddata =
+		data.iter().map(|s| RecordData::new(s)).collect::<Vec<_>>();
+
+	    Self {
+		name: name.to_string(),
+		ttl: ttl,
+		class: class,
+		rrtype: rrtype,
+		data: recorddata,
+	    }
+	}
+    }
+
+    macro_rules! assert_next_rec {
+	($parser:expr, $name:expr, $ttl:expr, $class:expr, $rrtype:expr, $( $data:expr ),*) => {
+	    assert_eq!(
+		$parser.next(),
+		Some(Record::new_with_data($name, $ttl, $class, $rrtype, vec![$($data),*])),
+	    );
+	}
+    }
+    
+    #[test]
+    fn simple_zone() {
+	let file = File::open("./test_data/simple.zn").unwrap();
+	let mut p = ZoneParser::new(&file);
+
+	assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::SOA,
+	    "ns1.simple.zn.", "hostmaster.simple.zn.",
+	    "2024090906", "7200", "1800", "86400", "7200");
+
+	assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::NS, "ns1.simple.zn.");
+
+    	assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::NS, "ns2.simple.zn.");
+
+    	assert_next_rec!(
+	    p, "info.simple.zn.", 3600, RRClass::IN, RRType::MX, "mail.simple.zn.");
+
+    	assert_next_rec!(
+	    p, "mail.simple.zn.", 3600, RRClass::IN, RRType::A, "1.2.3.4");
+
+    	assert_next_rec!(
+	    p, "mail.simple.zn.", 3600, RRClass::IN, RRType::AAAA, "1:2:3:4");
+
+    	assert!(p.next().is_none());
+    }
+
+    #[test]
+    fn directives() {
+	let file = File::open("./test_data/directives.zn").unwrap();
+	let mut p = ZoneParser::new(&file);
+
+	assert!(p.next().is_some());
+
+	assert_eq!(p.origin, "simple.zn.");
+
+	assert_eq!(p.default_ttl, 3600);
+    }
+
+    #[test]
+    fn case_insensitivity() {
+	let file = File::open("./test_data/lc_and_uc.zn").unwrap();
+	let mut p = ZoneParser::new(&file);
+
+	assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::SOA,
+	    "NS1.simple.zn.", "Hostmaster.Simple.Zn.",
+	    "2024090906", "7200", "1800", "86400", "7200");
+
+    	assert!(p.next().is_none());
+    }
+
+    #[test]
+    fn relative_names() {
+	let file = File::open("./test_data/relative.zn").unwrap();
+	let mut p = ZoneParser::new(&file);
+
+	let rr1 = p.next();
+	assert!(rr1.is_some());
+	assert_eq!(p.absolute_name(&rr1.unwrap().name), "simple.zn.");
+
+	let rr2 = p.next();
+	assert!(rr2.is_some());
+	assert_eq!(p.absolute_name(&rr2.unwrap().name), "simple.zn.");
+
+	let rr3 = p.next();
+	assert!(rr3.is_some());
+	assert_eq!(p.absolute_name(&rr3.unwrap().name), "info.simple.zn.");
+
+	let rr4 = p.next();
+	assert!(rr4.is_some());
+	assert_eq!(p.absolute_name(&rr4.unwrap().name), "mail.simple.zn.");
+
+    	assert!(p.next().is_none());
+    }
+
+    #[test]
+    fn default_values() {
+	let file = File::open("./test_data/directives.zn").unwrap();
+	let mut p = ZoneParser::new(&file);
+
+	assert!(p.next().is_some());
+
+	assert_next_rec!(
+	    p, "@", 300, RRClass::IN, RRType::NS, "ns1.simple.zn.");
+
+    	assert_next_rec!(
+	    p, "@", 3600, RRClass::IN, RRType::NS, "ns2.simple.zn.");
+
+    	assert!(p.next().is_none());
+    }
+
+    #[test]
+    fn brackets_and_comments() {
+	let file = File::open("./test_data/brackets_and_comments.zn").unwrap();
+	let mut p = ZoneParser::new(&file);
+
+	assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::SOA,
+	    "ns1.simple.zn.", "hostmaster.simple.zn.",
+	    "2024090906", "7200", "1800", "86400", "7200");
+
+    	assert!(p.next().is_none());
+    }
+
+    #[test]
+    fn quotes() {
+	let file = File::open("./test_data/quotes.zn").unwrap();
+	let mut p = ZoneParser::new(&file);
+
+        assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,
+	    "first quote", "Second QUOTE", "3. qt");
+
+    	assert!(p.next().is_none());
     }
 }
