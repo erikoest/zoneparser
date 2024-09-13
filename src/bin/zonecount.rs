@@ -20,7 +20,8 @@ fn main() {
 
     let mut rr_count: HashMap::<RRType, u32> = HashMap::new();
     let mut rrset_count: HashMap::<RRType, u32> = HashMap::new();
-    let mut count = 0;
+    let mut rr_total = 0;
+    let mut rrset_total = 0;
     let mut last_name = "".to_string();
     let mut last_rrtype = RRType::None;
 
@@ -36,6 +37,8 @@ fn main() {
 		rrset_count.insert(rr.rrtype, 1);
             }
 
+            rrset_total += 1;
+
 	    last_name = rr.name;
 	    last_rrtype = rr.rrtype;
 	}
@@ -48,21 +51,20 @@ fn main() {
 	    rr_count.insert(rr.rrtype, 1);
         }
 	
-	count += 1;
+	rr_total += 1;
     }
 
     println!("");
-    println!("RR count:");
+    println!("RR:");
     for k in rr_count.keys() {
-        println!("{:?}: {}", k, rr_count.get(k).unwrap());
+        println!("  {:?}: {}", k, rr_count.get(k).unwrap());
     }
-        
-    println!("");
-    println!("RRSet count:");
-    for k in rrset_count.keys() {
-        println!("{:?}: {}", k, rrset_count.get(k).unwrap());
-    }
+    println!("  total: {}", rr_total);
 
     println!("");
-    println!("{} records", count);
+    println!("RRSet:");
+    for k in rrset_count.keys() {
+        println!("  {:?}: {}", k, rrset_count.get(k).unwrap());
+    }
+    println!("  total: {}", rrset_total);
 }
