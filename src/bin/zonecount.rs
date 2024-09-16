@@ -20,29 +20,33 @@ fn main() {
 
     let mut rr_count: HashMap::<RRType, u32> = HashMap::new();
     let mut rrset_count: HashMap::<RRType, u32> = HashMap::new();
+    let mut rrset_tmp: HashMap::<RRType, u32> = HashMap::new();
     let mut rr_total = 0;
     let mut rrset_total = 0;
     let mut last_name = "".to_string();
-    let mut last_rrtype = RRType::None;
 
     let p = ZoneParser::new(&file);
 
     for rr in p {
 	// Count rrs
-	if last_name != rr.name || last_rrtype != rr.rrtype {
-            if let Some(rrset_c) = rrset_count.get(&rr.rrtype) {
-		rrset_count.insert(rr.rrtype, rrset_c + 1);
-            }
-            else {
-		rrset_count.insert(rr.rrtype, 1);
-            }
-
-            rrset_total += 1;
+	if last_name != rr.name {
+	    // Transfer all temporary rrset counts
+	    for rrtype in rrset_tmp.keys() {
+		if let Some(rrset_c) = rrset_count.get(&rrtype) {
+		    rrset_count.insert(*rrtype, rrset_c + 1);
+		}
+		else {
+		    rrset_count.insert(*rrtype, 1);
+		}
+		rrset_total += 1;
+	    }
 
 	    last_name = rr.name;
-	    last_rrtype = rr.rrtype;
+
+	    // Clear temporary rrset count
+	    rrset_tmp.clear();
 	}
-		
+
         // Count rrs
         if let Some(rr_c) = rr_count.get(&rr.rrtype) {
 	    rr_count.insert(rr.rrtype, rr_c + 1);
@@ -50,8 +54,22 @@ fn main() {
         else {
 	    rr_count.insert(rr.rrtype, 1);
         }
+
+	// Count rrsets
+	rrset_tmp.insert(rr.rrtype, 1);
 	
 	rr_total += 1;
+    }
+
+    // Count the last rrsets
+    for rrtype in rrset_tmp.keys() {
+	if let Some(rrset_c) = rrset_count.get(&rrtype) {
+	    rrset_count.insert(*rrtype, rrset_c + 1);
+	}
+	else {
+	    rrset_count.insert(*rrtype, 1);
+	}
+	rrset_total += 1;
     }
 
     println!("");
