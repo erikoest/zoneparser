@@ -22,7 +22,7 @@ impl Display for RRClass {
 }
 
 // Numeric representation for rrtype
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, EnumIter)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, EnumIter, Ord, PartialOrd)]
 pub enum RRType {
     #[default]
     None       = 0,
@@ -84,7 +84,7 @@ impl Display for RRType {
 
 #[derive(Debug, Clone)]
 pub struct RecordData {
-    data: String,
+    pub data: String,
 }
 
 impl RecordData {
@@ -274,6 +274,10 @@ impl<'a> ZoneParser<'a> {
 	}
     }
 
+    pub fn rrtype_from_str(&self, rrtype_str: &str) -> RRType {
+        return *self.rrtype_hash.get(&rrtype_str.to_lowercase()).unwrap();
+    }
+
     fn parse_line(&mut self, rec: &mut Option<Record>) {
 	let mut line: String = "".to_string();
 	let len = self.bufreader.read_line(&mut line).
@@ -358,7 +362,9 @@ impl<'a> ZoneParser<'a> {
 		    }
 		    else {
 			// Expect TTL
-			self.ttl = word.parse().unwrap();
+			self.ttl = word.parse().expect(&format!(
+                            "Parse error on line {} pos {}",
+                            self.line_no, pos));
 		    }
 		},
 		ParserState::Directive => {
@@ -366,7 +372,9 @@ impl<'a> ZoneParser<'a> {
 		    let value = part[0..wlen].escape_bytes().to_string().
 			to_lowercase();
 		    if self.directive_buf == "$ttl" {
-			self.default_ttl = value.parse().unwrap();
+			self.default_ttl = value.parse().expect(&format!(
+                            "Parse error on line {} pos {}",
+                            self.line_no, pos));
 		    }
 		    else if self.directive_buf == "$origin" {
 			self.origin = value;
@@ -389,7 +397,8 @@ impl<'a> ZoneParser<'a> {
 			else {
 			    self.state = ParserState::QString;
 			    self.quoted_buf = format!(
-				"{}{}", &part[1..wlen].escape_bytes(), part[wlen] as char);
+				"{}{}", &part[1..wlen].escape_bytes(),
+                                part[wlen] as char);
 			}
 		    }
 		    else {
@@ -402,8 +411,9 @@ impl<'a> ZoneParser<'a> {
 		    // Continuation of quoted string. Look for end quote.
 		    if part[wlen - 1] == b'"' {
 			// Got end quote
-			let s = &part[0..wlen - 1].escape_bytes().to_string();
-			self.quoted_buf.push_str(s);
+			let s = format!(
+                            "{}", &part[0..wlen - 1].escape_bytes());
+			self.quoted_buf.push_str(&s);
 			rec.as_mut().unwrap().push_data(
 			    RecordData::new(&self.quoted_buf));
 			self.state = ParserState::Data;
@@ -411,7 +421,9 @@ impl<'a> ZoneParser<'a> {
 		    else {
 			// No end quote. Just concatenate the whole part. We
 			// expect the next word to continue the string.
-			let s = part.escape_bytes().to_string();
+			let s = format!(
+                            "{}{}", &part[0..wlen].escape_bytes(),
+                            part[wlen] as char);
 			self.quoted_buf.push_str(&s);
 		    }
 		},
@@ -524,22 +536,23 @@ mod tests {
     fn relative_names() {
 	let file = File::open("./test_data/relative.zn").unwrap();
 	let mut p = ZoneParser::new(&file);
+        let mut rr;
 
-	let rr1 = p.next();
-	assert!(rr1.is_some());
-	assert_eq!(p.absolute_name(&rr1.unwrap().name), "simple.zn.");
+	rr = p.next();
+	assert!(rr.is_some());
+	assert_eq!(p.absolute_name(&rr.unwrap().name), "simple.zn.");
 
-	let rr2 = p.next();
-	assert!(rr2.is_some());
-	assert_eq!(p.absolute_name(&rr2.unwrap().name), "simple.zn.");
+	rr = p.next();
+	assert!(rr.is_some());
+	assert_eq!(p.absolute_name(&rr.unwrap().name), "simple.zn.");
 
-	let rr3 = p.next();
-	assert!(rr3.is_some());
-	assert_eq!(p.absolute_name(&rr3.unwrap().name), "info.simple.zn.");
+	rr = p.next();
+	assert!(rr.is_some());
+	assert_eq!(p.absolute_name(&rr.unwrap().name), "info.simple.zn.");
 
-	let rr4 = p.next();
-	assert!(rr4.is_some());
-	assert_eq!(p.absolute_name(&rr4.unwrap().name), "mail.simple.zn.");
+	rr = p.next();
+	assert!(rr.is_some());
+	assert_eq!(p.absolute_name(&rr.unwrap().name), "mail.simple.zn.");
 
     	assert!(p.next().is_none());
     }
