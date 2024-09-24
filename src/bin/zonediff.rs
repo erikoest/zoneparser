@@ -10,17 +10,20 @@ use zoneparser::{ZoneParser, Record, RecordData, RRType};
 be sorted on domain names. The exception is the apex records which is
 expected to be found at the start. 
 */
-struct SetIterator<'a> { parser: ZoneParser<'a>, next: Option<Record>,
-    set: Vec<Record>, }
 
 /* Iterator which gets rrset on each iteration. In a strict sense,
 this struct is not an iterator (it does not implement the iterator
 trait). Also, it does not return the next item. Rather, it keeps it
 until the next iteration step is performed.
 */
-impl<'a> SetIterator<'a> { fn new(file: &'a File) -> Self { let mut
-    parser = ZoneParser::new(&file); let next = parser.next(); let
-    set: Vec<Record> = vec!();
+struct SetIterator<'a> { parser: ZoneParser<'a>, next: Option<Record>,
+    set: Vec<Record>, }
+
+impl<'a> SetIterator<'a> {
+    fn new(file: &'a File) -> Self {
+	let mut parser = ZoneParser::new(&file);
+	let next = parser.next();
+	let set: Vec<Record> = vec!();
 
 	Self {
 	    parser: parser,
