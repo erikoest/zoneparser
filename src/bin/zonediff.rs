@@ -20,8 +20,8 @@ struct SetIterator<'a> { parser: ZoneParser<'a>, next: Option<Record>,
     set: Vec<Record>, }
 
 impl<'a> SetIterator<'a> {
-    fn new(file: &'a File) -> Self {
-	let mut parser = ZoneParser::new(&file);
+    fn new(file: &'a File, origin: &str) -> Self {
+	let mut parser = ZoneParser::new(&file, origin);
 	let next = parser.next();
 	let set: Vec<Record> = vec!();
 
@@ -105,11 +105,11 @@ struct Differ<'a> {
 }
 
 impl<'a> Differ<'a> {
-    fn new(oldfile: &'a File, newfile: &'a File, ignore_serial: bool,
-	   verbose: bool) -> Self {
-	let old = SetIterator::new(&oldfile);
-	let new = SetIterator::new(&newfile);
-	
+    fn new(oldfile: &'a File, newfile: &'a File, origin: &str,
+           ignore_serial: bool, verbose: bool) -> Self {
+	let old = SetIterator::new(&oldfile, origin);
+	let new = SetIterator::new(&newfile, origin);
+
 	Self {
 	    old: old,
 	    new: new,
@@ -196,6 +196,7 @@ impl<'a> Differ<'a> {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    let mut origin = "";
     let mut verbose = false;
     let mut ignore_serial = false;
 
@@ -203,6 +204,10 @@ fn main() {
 
     loop {
 	match args[arg_count].as_str() {
+            "-o" | "--origin" => {
+                origin = &args[arg_count + 1];
+                arg_count += 2;
+            },
 	    "-s" | "--ignore-serial" => {
 		arg_count += 1;
 		ignore_serial = true;
@@ -216,14 +221,18 @@ fn main() {
     }
     
     if args.len() < 2 + arg_count {
-        println!("Usage: zonediff [-s] [-v] <old zonefile> <new zonefile>");
+        println!("Usage: zonediff [-o origin] [-s] [-v] <old zonefile> <new zonefile>");
         return;
+    }
+
+    if origin == "" {
+        origin = &args[arg_count];
     }
 
     let oldfile = File::open(&args[arg_count]).unwrap();
     let newfile = File::open(&args[arg_count + 1]).unwrap();
 
-    let mut differ = Differ::new(&oldfile, &newfile, ignore_serial, verbose);
+    let mut differ = Differ::new(&oldfile, &newfile, origin, ignore_serial, verbose);
     differ.diff();
 
     println!("added: {}", differ.added);

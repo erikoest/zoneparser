@@ -210,6 +210,7 @@ pub struct ZoneParser<'a> {
 
     rrtype_hash: HashMap<String, RRType>,
     rrclass_hash: HashMap<String, RRClass>,
+    rrtype_bm_hash: HashMap<String, (u8, u128, u128)>,
 }
 
 impl<'a> Iterator for ZoneParser<'a> {
@@ -236,9 +237,10 @@ impl<'a> Iterator for ZoneParser<'a> {
 }
 
 impl<'a> ZoneParser<'a> {
-    pub fn new(file: &'a File) -> Self {
+    pub fn new(file: &'a File, origin: &str) -> Self {
 	let buf = BufReader::new(file);
 
+        // Build some lookup tables for classes, types and type bitmaps
 	let mut classes = HashMap::new();
 	
 	for c in RRClass::iter() {
@@ -248,19 +250,48 @@ impl<'a> ZoneParser<'a> {
 	let mut types = HashMap::new();
 
 	for t in RRType::iter() {
-	    types.insert(format!("{:?}", t).to_lowercase(), t);
-	}
-	
+            let t_str = format!("{:?}", t).to_lowercase();
+	    types.insert(t_str, t);
+        }
+
+        let mut bm_hash = HashMap::new();
+
+        for t in RRType::iter() {
+            if t == RRType::None {
+                continue;
+            }
+
+            let t_str = format!("{:?}", t).to_lowercase();
+            let window_block = (t as u16 >> 8) as u8;
+            let bitpos = (t as u16) & 0xff;
+            let bm1: u128;
+            let bm2: u128;
+            if bitpos < 128 {
+                bm1 = 1 << (127 - bitpos);
+                bm2 = 0;
+            }
+            else {
+                bm1 = 0;
+                bm2 = 1 << (255 - bitpos);
+            }
+            bm_hash.insert(t_str, (window_block, bm1, bm2));
+        }
+
+        // Tolerate origin with or without ending dot
+        let mut origin_muted = origin.to_string();
+        if !origin_muted.ends_with('.') {
+            origin_muted.push('.');
+        }
+
 	Self {
 	    // Input text with position counters
 	    bufreader: buf,
 	    line_no: 0,
-
 	    // Parser intermediary values
 	    quoted_buf: "".to_string(),
 	    directive_buf: "".to_string(),
 	    name: "".to_string(),
-	    origin: "".to_string(),
+	    origin: origin_muted,
 	    default_ttl: 0,
 	    ttl: 0,
 	    class: Default::default(),
@@ -271,11 +302,21 @@ impl<'a> ZoneParser<'a> {
 
 	    rrclass_hash: classes,
 	    rrtype_hash: types,
+            rrtype_bm_hash: bm_hash,
 	}
+    }
+
+    pub fn rrclass_from_str(&self, rrclass_str: &str) -> RRClass {
+        return *self.rrclass_hash.get(&rrclass_str.to_lowercase()).unwrap();
     }
 
     pub fn rrtype_from_str(&self, rrtype_str: &str) -> RRType {
         return *self.rrtype_hash.get(&rrtype_str.to_lowercase()).unwrap();
+    }
+
+    // RRType bitmap for NSEC and NSEC3 records
+    pub fn rrtype_bm_from_str(&self, rrtype_str: &str) -> (u8, u128, u128) {
+        return *self.rrtype_bm_hash.get(&rrtype_str.to_lowercase()).unwrap();
     }
 
     fn parse_line(&mut self, rec: &mut Option<Record>) {

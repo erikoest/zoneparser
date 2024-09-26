@@ -11,12 +11,29 @@ use zoneparser::RRType;
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 2 {
-        println!("Usage: zonecount <zonefile>");
+    let mut origin = "";
+    let mut arg_count = 1;
+
+    loop {
+        match args[arg_count].as_str() {
+            "-o" | "--origin" => {
+                origin = &args[arg_count + 1];
+                arg_count += 2;
+            },
+            _ => break,
+        }
+    }
+
+    if args.len() < 1 + arg_count {
+        println!("Usage: zonecount [-o origin] <zonefile>");
         return;
     }
 
-    let file = File::open(&args[1]).unwrap();
+    if origin == "" {
+        origin = &args[arg_count];
+    }
+
+    let file = File::open(&args[arg_count]).unwrap();
 
     let mut rr_count: HashMap::<RRType, u32> = HashMap::new();
     let mut rrset_count: HashMap::<RRType, u32> = HashMap::new();
@@ -25,7 +42,7 @@ fn main() {
     let mut rrset_total = 0;
     let mut last_name = "".to_string();
 
-    let p = ZoneParser::new(&file);
+    let p = ZoneParser::new(&file, origin);
 
     for rr in p {
 	// Count rrs
