@@ -7,7 +7,7 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 // Numeric representation for rrclass
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, EnumIter)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, EnumIter, Ord, PartialOrd)]
 pub enum RRClass {
     #[default]
     IN = 1,
