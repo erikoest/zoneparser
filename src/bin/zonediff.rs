@@ -53,19 +53,27 @@ struct SetIterator<'a> {
     parser: ZoneParser<'a>,
     next: Option<Record>,
     set: Vec<Record>,
+    skip_types: HashSet<RRType>,
     pub name: String,
 }
 
 impl<'a> SetIterator<'a> {
-    fn new(file: &'a File, origin: &str) -> Self {
+    fn new(file: &'a File, origin: &str, skip_dnssec: bool) -> Self {
 	let mut parser = ZoneParser::new(&file, origin);
 	let next = parser.next();
 	let set: Vec<Record> = vec!();
+        let mut skip = HashSet::new();
+        if skip_dnssec {
+            skip.insert(RRType::NSEC);
+            skip.insert(RRType::NSEC3);
+            skip.insert(RRType::RRSIG);
+        }
 
 	Self {
 	    parser: parser,
 	    next: next,
 	    set: set,
+            skip_types: skip,
             name: "".to_string(),
 	}
     }
@@ -193,14 +201,24 @@ impl<'a> SetIterator<'a> {
 	    self.name = self.next.as_ref().unwrap().name.clone();
 	    while self.next.is_some() {
 		if &self.next.as_ref().unwrap().name == &self.name {
-		    let nx = self.parser.next();
                     let mut rr;
-		    if nx.is_some() {
-                        rr = self.next.replace(nx.unwrap()).unwrap();
+
+                    loop {
+                        let nx = self.parser.next();
+
+                        if nx.is_some() {
+                            let t = nx.as_ref().unwrap().rrtype;
+                            if self.skip_types.contains(&t) {
+                                continue;
+                            }
+
+                            rr = self.next.replace(nx.unwrap()).unwrap();
+                        }
+                        else {
+                            rr = self.next.take().unwrap();
+                        }
+                        break;
                     }
-                    else {
-                        rr = self.next.take().unwrap();
-		    }
 
                     if rr.rrtype == RRType::SOA && ignore_serial {
                         // Wipe serial number.
@@ -229,9 +247,9 @@ struct Differ<'a> {
 
 impl<'a> Differ<'a> {
     fn new(oldfile: &'a File, newfile: &'a File, origin: &str,
-           ignore_serial: bool, verbose: bool) -> Self {
-	let old = SetIterator::new(&oldfile, origin);
-	let new = SetIterator::new(&newfile, origin);
+           ignore_serial: bool, skip_dnssec: bool, verbose: bool) -> Self {
+	let old = SetIterator::new(&oldfile, origin, skip_dnssec);
+	let new = SetIterator::new(&newfile, origin, skip_dnssec);
         let mut added = HashMap::new();
         let mut deleted = HashMap::new();
         let mut changed = HashMap::new();
@@ -368,6 +386,7 @@ fn main() {
     let mut origin = "";
     let mut verbose = false;
     let mut ignore_serial = false;
+    let mut skip_dnssec = false;
 
     let mut arg_count = 1;
 
@@ -381,6 +400,10 @@ fn main() {
 		arg_count += 1;
 		ignore_serial = true;
 	    },
+            "-d" | "--skip-dnssec" => {
+                arg_count += 1;
+                skip_dnssec = true;
+            }
 	    "-v" | "--verbose" => {
 		arg_count += 1;
 		verbose = true;
@@ -401,7 +424,7 @@ fn main() {
     let oldfile = File::open(&args[arg_count]).unwrap();
     let newfile = File::open(&args[arg_count + 1]).unwrap();
 
-    let mut differ = Differ::new(&oldfile, &newfile, origin, ignore_serial, verbose);
+    let mut differ = Differ::new(&oldfile, &newfile, origin, ignore_serial, skip_dnssec, verbose);
     differ.diff();
     differ.print_summary();
 }
