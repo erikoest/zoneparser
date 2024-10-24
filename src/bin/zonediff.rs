@@ -1,382 +1,477 @@
 extern crate zoneparser;
 
-use std::fs::File;
 use std::env;
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-    
+use std::fs::File;
+use diffs::{Diff, myers::diff};
+use std::collections::HashMap;
+use core::ops::Index;
+
 use zoneparser::{ZoneParser, Record, RecordData, RRType};
 
-/* Compare the records of two zones. The zone records are expected to
-be sorted on domain names. The exception is the apex records which is
-expected to be found at the start. 
-*/
-
-// Compare records in some way. Canonical order is not important here.
-fn rr_sort(a: &Record, b: &Record) -> Ordering {
-    // We expect name to be equal. Don't compare it here.
-    if a.rrtype != b.rrtype {
-        return a.rrtype.cmp(&b.rrtype);
-    }
-
-    if a.ttl != b.ttl {
-        return a.ttl.cmp(&b.ttl);
-    }
-
-    if a.class != b.class {
-        return a.class.cmp(&b.class);
-    }
-
-    for i in 0..a.data.len() {
-        if b.data.len() < i {
-            return Ordering::Greater;
-        }
-
-        if a.data[i] != b.data[i] {
-            return a.data[i].data.cmp(&b.data[i].data);
-        }
-    }
-
-    if b.data.len() > a.data.len() {
-        return Ordering::Less;
-    }
-
-    Ordering::Equal
+struct RecordDiffer<'a> {
+    old: &'a Vec<Record>,
+    new: &'a Vec<Record>,
+    verbose: bool,
+    has_changes: bool,
 }
 
-/* Iterator which gets rrset on each iteration. In a strict sense,
-this struct is not an iterator (it does not implement the iterator
-trait). Also, it does not return the next item. Rather, it keeps it
-until the next iteration step is performed.
-*/
-struct SetIterator<'a> {
-    parser: ZoneParser<'a>,
-    next: Option<Record>,
+impl<'a> RecordDiffer<'a> {
+    fn new(old: &'a Vec<Record>, new: &'a Vec<Record>, verbose: bool) -> Self {
+        Self {
+            old: old,
+            new: new,
+            verbose: verbose,
+            has_changes: false,
+        }
+    }
+}
+
+impl<'a> Diff for RecordDiffer<'a> {
+    type Error = ();
+
+    fn equal(&mut self, _: usize, _: usize, _: usize)
+             -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn delete(&mut self, old: usize, len: usize, _: usize)
+              -> Result<(), Self::Error> {
+        self.has_changes = true;
+
+        if self.verbose {
+            for i in old..old + len {
+                println!("~- {}", self.old[i]);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn insert(&mut self, _: usize, new: usize, new_len: usize)
+              -> Result<(), Self::Error> {
+        self.has_changes = true;
+
+        if self.verbose {
+            for i in new..new + new_len {
+                println!("~+ {}", self.new[i]);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn replace(&mut self, old: usize, old_len: usize,
+               new: usize, new_len: usize) -> Result<(), Self::Error> {
+        self.has_changes = true;
+
+        if self.verbose {
+            for i in old..old + old_len {
+                println!("~- {}", self.old[i]);
+            }
+
+            for i in new..new + new_len {
+                println!("~+ {}", self.new[i]);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+}
+
+struct RecordSet {
     set: Vec<Record>,
-    skip_types: HashSet<RRType>,
-    pub name: String,
 }
 
-impl<'a> SetIterator<'a> {
-    fn new(file: &'a File, origin: &str, skip_dnssec: bool) -> Self {
-	let mut parser = ZoneParser::new(&file, origin);
-	let next = parser.next();
-	let set: Vec<Record> = vec!();
-        let mut skip = HashSet::new();
-        if skip_dnssec {
-            skip.insert(RRType::NSEC);
-            skip.insert(RRType::NSEC3);
-            skip.insert(RRType::RRSIG);
-        }
-
-	Self {
-	    parser: parser,
-	    next: next,
-	    set: set,
-            skip_types: skip,
-            name: "".to_string(),
-	}
-    }
-
-    fn print_set(&self, pfx: &str) {
-        for rr in &self.set {
-            println!("{} {}", pfx, rr);
+impl RecordSet {
+    fn new() -> Self {
+        Self {
+            set: vec!(),
         }
     }
 
-    fn count_and_print_differences(&self, other: &'a SetIterator<'a>,
-                                   changed: &'a mut HashMap<RRType, usize>,
-                                   verbose: bool) {
-        // Sort sets in-place
-        let mut this = self.set.clone();
-        this.sort_by(|a, b| rr_sort(&a, &b));
-        let mut that = other.set.clone();
-        that.sort_by(|a, b| rr_sort(&a, &b));
-
-        let mut changed_types: HashSet<RRType> = HashSet::new();
-
-        while ! this.is_empty() && ! that.is_empty() {
-            if this.is_empty() && ! that.is_empty() {
-	        // Only right set. Record is added
-                let r = that.pop().unwrap();
-                changed_types.insert(r.rrtype);
-                if verbose {
-                    println!("~+ {}", r);
-                }
-	    }
-
-	    if ! this.is_empty() && that.is_empty() {
-	        // Only left set. Record is deleted
-                let r = this.pop().unwrap();
-                changed_types.insert(r.rrtype);
-                if verbose {
-                    println!("~- {}", r);
-                }
-	    }
-
-            let rthis = this.pop().unwrap();
-            let rthat = that.pop().unwrap();
-
-	    match rr_sort(&rthis, &rthat) {
-	        Ordering::Greater => {
-		    // Right set sorts higher. Record is deleted
-                    changed_types.insert(rthis.rrtype);
-                    if verbose {
-                        println!("~- {}", rthis);
-                    }
-                    that.push(rthat);
-	        },
-	        Ordering::Less => {
-		    // Left set sorts higher. Record is added
-                    changed_types.insert(rthat.rrtype);
-                    if verbose {
-                        println!("~+ {}", rthat);
-                    }
-                    this.push(rthis);
-	        },
-	        Ordering::Equal => {
-		    // No changes.
-	        },
-	    }
-        }
-
-        for t in changed_types {
-            if let Some(&i) = changed.get(&t) {
-                changed.insert(t, i + 1);
-            }
-            else {
-                changed.insert(t, 1);
-            }
-        }
-
-        changed.insert(RRType::None,
-                       *changed.get(&RRType::None).unwrap() + 1);
+    fn push(&mut self, r: Record) {
+        self.set.push(r);
     }
 
-    fn is_empty(&self) -> bool {
-	return self.set.is_empty();
+    fn name(&self) -> String {
+        self.set[0].name.clone()
     }
 
-    fn check_differences(&self, other: &'a SetIterator<'a>,
-                         changed: &'a mut HashMap<RRType, usize>,
-                         verbose: bool) {
-        let mut is_changed = false;
+    fn rrtype(&self) -> RRType {
+        self.set[0].rrtype
+    }
 
+    fn print_pf(&self, pf: &str) {
         for i in 0..self.set.len() {
-            if self.set[i] != other.set[i] {
-                is_changed = true;
-            }
+            println!("{} {}", pf, self.set[i]);
         }
+    }
+}
 
-        if is_changed {
-            // Count changes per rr type
-            self.count_and_print_differences(&other, changed, verbose);
+impl PartialEq for RecordSet {
+    fn eq(&self, other: &RecordSet) -> bool {
+        return (self.name() == other.name()) &&
+            (self.rrtype() == other.rrtype());
+    }
+}
+
+enum DiffSection {
+    Equal(usize, usize, usize),
+    Delete(usize, usize, usize),
+    Insert(usize, usize, usize),
+    Replace(usize, usize, usize, usize),
+}
+
+struct SetDiffer {
+    differences: Vec<DiffSection>,
+    old_tail: usize,
+    new_tail: usize,
+}
+
+impl SetDiffer {
+    fn new() -> Self {
+        Self {
+            differences: vec!(),
+            old_tail: 0,
+            new_tail: 0,
         }
     }
 
-    fn count_records(&self, count: &mut HashMap<RRType, usize>) {
-        let mut rrt: HashSet<RRType> = HashSet::new();
-
-        for rr in &self.set {
-            rrt.insert(rr.rrtype);
-        }
-
-        for t in rrt {
-            if let Some(i) = count.get(&t) {
-                count.insert(t, i + 1);
+    fn trunc_differences(&mut self) {
+        // Remove the last differences until we find an equal section
+        loop {
+            match self.differences.last() {
+                Some(DiffSection::Equal(old, new, len)) => {
+                    // Update tails.
+                    self.old_tail = old + len;
+                    self.new_tail = new + len;
+                    break;
+                },
+                None => {
+                    // Buffers must contain at least one equal section.
+                    // If not, the buffer size is not big enough.
+                    panic!("Too many differences. Buffer overflow.");
+                },
+                _ => {
+                    self.differences.pop().unwrap();
+                },
             }
-            else {
-                count.insert(t, 1);
-            }
         }
-
-        count.insert(RRType::None,
-                     count.get(&RRType::None).unwrap() + 1);
     }
-    
-    fn fetch_next(&mut self, ignore_serial: bool) {
-	self.set.clear();
+}
 
-	if self.next.is_some() {
-	    self.name = self.next.as_ref().unwrap().name.clone();
-	    while self.next.is_some() {
-		if &self.next.as_ref().unwrap().name == &self.name {
-                    let mut rr;
+impl Diff for SetDiffer {
+    type Error = ();
 
-                    loop {
-                        let nx = self.parser.next();
+    fn equal(&mut self, old: usize, new: usize, len: usize)
+             -> Result<(), Self::Error> {
+        self.differences.push(DiffSection::Equal(old, new, len));
 
-                        if nx.is_some() {
-                            let t = nx.as_ref().unwrap().rrtype;
-                            if self.skip_types.contains(&t) {
-                                continue;
-                            }
+        Ok(())
+    }
 
-                            rr = self.next.replace(nx.unwrap()).unwrap();
-                        }
-                        else {
-                            rr = self.next.take().unwrap();
-                        }
+    fn delete(&mut self, old: usize, len: usize, new: usize)
+              -> Result<(), Self::Error> {
+        self.differences.push(DiffSection::Delete(old, len, new));
+
+        Ok(())
+    }
+
+    fn insert(&mut self, old: usize, new: usize, new_len: usize)
+              -> Result<(), Self::Error> {
+        self.differences.push(DiffSection::Insert(old, new, new_len));
+
+        Ok(())
+    }
+
+    fn replace(&mut self, old: usize, old_len: usize,
+               new: usize, new_len: usize) -> Result<(), Self::Error> {
+        self.differences.push(DiffSection::Replace(old, old_len, new, new_len));
+
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+struct Ring<'a> {
+    parser: ZoneParser<'a>,
+    data: Vec<RecordSet>,
+    tail: usize,
+    head: usize,
+    buf_size: usize,
+    ignore_serial: bool,
+    skip_dnssec: bool,
+    at_end: bool,
+    last: Option<RecordSet>,
+}
+
+impl<'a> Ring<'a> {
+    fn new(file: &'a File, origin: &str, buf_size: usize,
+           ignore_serial: bool, skip_dnssec: bool) -> Self {
+        Self {
+            parser: ZoneParser::new(&file, origin),
+            data: vec!(),
+            tail: 0,
+            head: 0,
+            buf_size: buf_size,
+            ignore_serial: ignore_serial,
+            skip_dnssec: skip_dnssec,
+            at_end: false,
+            last: None,
+        }
+    }
+
+    fn read_zone_records(&mut self) {
+        let mut name = "".to_string();
+        let mut rrtype = RRType::None;
+
+        if self.last.is_some() {
+            let last = self.last.as_ref().unwrap();
+            name = last.name();
+            rrtype = last.rrtype();
+        }
+
+        while let Some(mut r) = self.parser.next() {
+            if self.skip_dnssec && (r.rrtype == RRType::NSEC ||
+                                    r.rrtype == RRType::NSEC3 ||
+                                    r.rrtype == RRType::RRSIG) {
+                continue;
+            }
+
+            if self.ignore_serial && r.rrtype == RRType::SOA {
+                r.data[2] = RecordData::new("");
+            }
+
+            if self.last.is_some() {
+                if r.name == name && r.rrtype == rrtype {
+                    self.last.as_mut().unwrap().push(r);
+                }
+                else {
+                    name = r.name.clone();
+                    rrtype = r.rrtype;
+                    let mut newset = RecordSet::new();
+                    newset.push(r);
+
+                    let taken = self.last.replace(newset);
+                    self.push(taken.unwrap());
+
+                    // Break here if ring buffer is full
+                    if self.head - self.tail == self.buf_size {
                         break;
                     }
+                }
+            }
+            else {
+                let mut set = RecordSet::new();
+                set.push(r);
+                let _ = self.last.insert(set);
+            }
+        }
 
-                    if rr.rrtype == RRType::SOA && ignore_serial {
-                        // Wipe serial number.
-                        rr.data[2] = RecordData::new("");
-                    }
+        if self.last.is_some() {
+            if self.head - self.tail < self.buf_size {
+                let last = self.last.take().unwrap();
+                self.push(last);
+                self.at_end = true;
+            }
+        }
+        else {
+            self.at_end = true;
+        }
+    }
 
-                    self.set.push(rr);
-		}
-		else {
-		    break;
-		}
-	    }
-	}
+    fn push(&mut self, e: RecordSet) {
+        if self.head < self.buf_size {
+            self.data.push(e);
+            self.head += 1;
+        }
+        else {
+            self.data[self.head % self.buf_size] = e;
+            self.head += 1;
+            assert!(self.head - self.tail <= self.buf_size,
+                    "Ring buffer overflow");
+        }
+    }
+
+    fn set_tail(&mut self, t: usize) {
+        self.tail = t;
+    }
+}
+
+impl<'a> Index<usize> for Ring<'a> {
+    type Output = RecordSet;
+
+    fn index(&self, i: usize) -> &Self::Output {
+        return &self.data[i % self.buf_size];
     }
 }
 
 struct Differ<'a> {
-    old: SetIterator<'a>,
-    new: SetIterator<'a>,
-    ignore_serial: bool,
+    old: Ring<'a>,
+    new: Ring<'a>,
+    count: HashMap<RRType, HashMap<String, usize>>,
     verbose: bool,
-    added: HashMap<RRType, usize>,
-    deleted: HashMap<RRType, usize>,
-    changed: HashMap<RRType, usize>,
 }
 
 impl<'a> Differ<'a> {
-    fn new(oldfile: &'a File, newfile: &'a File, origin: &str,
-           ignore_serial: bool, skip_dnssec: bool, verbose: bool) -> Self {
-	let old = SetIterator::new(&oldfile, origin, skip_dnssec);
-	let new = SetIterator::new(&newfile, origin, skip_dnssec);
-        let mut added = HashMap::new();
-        let mut deleted = HashMap::new();
-        let mut changed = HashMap::new();
-        added.insert(RRType::None, 0);
-        deleted.insert(RRType::None, 0);
-        changed.insert(RRType::None, 0);
-
-	Self {
-	    old: old,
-	    new: new,
-	    ignore_serial: ignore_serial,
-	    verbose: verbose,
-	    added: added,
-	    deleted: deleted,
-	    changed: changed,
-	}
-    }
-
-    fn count_added_sets(&mut self) {
-        self.new.count_records(&mut self.added);
-	if self.verbose {
-	    self.new.print_set("++");
-	}
-    }
-
-    fn count_deleted_sets(&mut self) {
-        self.old.count_records(&mut self.deleted);
-	if self.verbose {
-	    self.old.print_set("--");
-	}
-    }
-
-    fn count_changed_sets(&mut self) {
-        self.old.check_differences(&self.new, &mut self.changed, self.verbose);
-    }
-
-    fn diff_sets(&mut self) {
-	if self.old.is_empty() && ! self.new.is_empty() {
-	    // Only right set. Set is added
-            self.count_added_sets();
-	    self.new.fetch_next(self.ignore_serial);
-	    return;
-	}
-
-	if ! self.old.is_empty() && self.new.set.is_empty() {
-	    // Only left set. Set is deleted
-            self.count_deleted_sets();
-	    self.old.fetch_next(self.ignore_serial);
-	    return;
-	}
-
-	match self.old.name.cmp(&self.new.name) {
-	    Ordering::Less => {
-		// Right set sorts higher. Set is deleted
-                self.count_deleted_sets();
-		self.old.fetch_next(self.ignore_serial);
-		return;
-	    },
-	    Ordering::Greater => {
-		// Left set sorts higher. Set is added
-                self.count_added_sets();
-		self.new.fetch_next(self.ignore_serial);
-		return;
-	    },
-	    Ordering::Equal => {
-		// Sets have the same name. Compare all records
-		// Diff each set of equal RRTtypes.
-                self.count_changed_sets();
-		self.old.fetch_next(self.ignore_serial);
-		self.new.fetch_next(self.ignore_serial);
-		return;
-	    },
-	}
-    }
-
-    fn diff (&mut self) {
-	// Get apex rrset from old and new zone
-	self.old.fetch_next(self.ignore_serial);
-	self.new.fetch_next(self.ignore_serial);
-
-	// Compare them
-	self.diff_sets();
-
-	while ! self.old.is_empty() && ! self.new.is_empty() {
-	    self.diff_sets();
-	}
-    }
-
-    fn print_summary(&self) {
-        let mut types: HashSet<RRType> = HashSet::new();
-
-        for &t in self.added.keys() {
-            types.insert(t);
+    fn new(oldfile: &'a File, newfile: &'a File, origin: &str, buf_size: usize,
+               ignore_serial: bool, skip_dnssec: bool, verbose: bool) -> Self {
+        Self {
+            old: Ring::new(&oldfile, origin, buf_size, ignore_serial,
+                           skip_dnssec),
+            new: Ring::new(&newfile, origin, buf_size, ignore_serial,
+                           skip_dnssec),
+            count: HashMap::new(),
+            verbose: verbose,
         }
+    }
 
-        for &t in self.deleted.keys() {
-            types.insert(t);
+    fn increment(&mut self, k1: RRType, k2: &str) {
+        if let Some(v1) = self.count.get_mut(&k1) {
+            if let Some(c) = v1.get(k2) {
+                v1.insert(k2.to_string(), c + 1);
+            }
+            else {
+                v1.insert(k2.to_string(), 1);
+            }
         }
-
-        for &t in self.changed.keys() {
-            types.insert(t);
+        else {
+            let mut m = HashMap::new();
+            m.insert(k2.to_string(), 1);
+            self.count.insert(k1, m);
         }
+    }
 
-        for t in types {
+    fn check_difference(&mut self, d: &DiffSection) {
+        match *d {
+            DiffSection::Equal(old, new, len) => {
+                // The same sets are found in old and new zonefile.
+                // Compare sets by record.
+                for i in 0..len {
+                    let mut rd = RecordDiffer::new(&self.old[old + i].set,
+                                                   &self.new[new + i].set,
+                                                   self.verbose);
+
+                    diff(&mut rd,
+                         &self.old[old + i].set, 0, self.old[old + i].set.len(),
+                         &self.new[new + i].set, 0, self.new[new + i].set.len()
+                    ).unwrap();
+
+                    if rd.has_changes {
+                        self.increment(RRType::None, "changed");
+                        self.increment(self.old[old + i].rrtype(), "changed");
+                    }
+                }
+            },
+            DiffSection::Delete(old, len, _) => {
+                for i in old..old + len {
+                    if self.verbose {
+                        self.old[i].print_pf("--");
+                    }
+
+                    self.increment(RRType::None, "deleted");
+                    self.increment(self.old[i].rrtype(), "deleted");
+                }
+            },
+            DiffSection::Insert(_, new, new_len) => {
+                for i in new..new + new_len {
+                    if self.verbose {
+                        self.new[i].print_pf("++");
+                    }
+
+                    self.increment(RRType::None, "added");
+                    self.increment(self.new[i].rrtype(), "added");
+                }
+            },
+            DiffSection::Replace(old, old_len, new, new_len) => {
+                for i in old..old + old_len {
+                    if self.verbose {
+                        self.old[i].print_pf("--");
+                    }
+
+                    self.increment(RRType::None, "deleted");
+                    self.increment(self.old[i].rrtype(), "deleted");
+                }
+
+                for i in new..new + new_len {
+                    if self.verbose {
+                        self.new[i].print_pf("++");
+                    }
+
+                    self.increment(RRType::None, "added");
+                    self.increment(self.new[i].rrtype(), "added");
+                }
+            }
+        }
+    }
+
+    fn print_results(&mut self) {
+        let mut some_names = None;
+
+        let mut types: Vec<_> = self.count.drain().collect();
+        types.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+        for (t, mut h) in types {
             if t == RRType::None {
+                some_names.replace(h);
                 continue;
             }
 
             println!("{}:", t);
 
-            if self.added.contains_key(&t) {
-                println!("  added: {}", self.added.get(&t).unwrap());
-            }
+            let mut count: Vec<_> = h.drain().collect();
+            count.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-            if self.deleted.contains_key(&t) {
-                println!("  deleted: {}", self.deleted.get(&t).unwrap());
-            }
-
-            if self.changed.contains_key(&t) {
-                println!("  changed: {}", self.changed.get(&t).unwrap());
+            for (op, c) in count {
+                println!("  {}: {}", op, c);
             }
         }
 
-        println!("names:");
-        println!("  added: {}", self.added.get(&RRType::None).unwrap());
-        println!("  deleted: {}", self.deleted.get(&RRType::None).unwrap());
-        println!("  changed: {}", self.changed.get(&RRType::None).unwrap());
+        if let Some(mut names) = some_names {
+            println!("total:");
+
+            let mut count: Vec<_> = names.drain().collect();
+            count.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+            for (op, c) in count {
+                println!("  {}: {}", op, c);
+            }
+        }
+    }
+
+    fn compare(&mut self) {
+        while !self.old.at_end && !self.new.at_end {
+            self.old.read_zone_records();
+            self.new.read_zone_records();
+
+            let mut sd = SetDiffer::new();
+
+            diff(&mut sd,
+                 &self.old, self.old.tail, self.old.head,
+                 &self.new, self.new.tail, self.new.head
+            ).unwrap();
+
+            if !self.old.at_end || !self.new.at_end {
+                // If we haven't parsed all sections, the last differences
+                // may be false. Remove them until we get an equal section.
+                sd.trunc_differences();
+            }
+
+            for d in sd.differences {
+                self.check_difference(&d);
+            }
+
+            self.old.set_tail(sd.old_tail);
+            self.new.set_tail(sd.new_tail);
+        }
     }
 }
 
@@ -384,6 +479,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     let mut origin = "";
+    let mut buf_size: usize = 1 << 16;
     let mut verbose = false;
     let mut ignore_serial = false;
     let mut skip_dnssec = false;
@@ -391,30 +487,29 @@ fn main() {
     let mut arg_count = 1;
 
     loop {
-	match args[arg_count].as_str() {
+        match args[arg_count].as_str() {
             "-o" | "--origin" => {
                 origin = &args[arg_count + 1];
                 arg_count += 2;
             },
-	    "-s" | "--ignore-serial" => {
-		arg_count += 1;
-		ignore_serial = true;
-	    },
+            "-b" | "--buffer-size" => {
+                buf_size = args[arg_count + 1].parse().unwrap();
+                arg_count += 2;
+            }
+            "-s" | "--ignore-serial" => {
+                arg_count += 1;
+                ignore_serial = true;
+            },
             "-d" | "--skip-dnssec" => {
                 arg_count += 1;
                 skip_dnssec = true;
             }
-	    "-v" | "--verbose" => {
-		arg_count += 1;
-		verbose = true;
-	    },
-	    _ => break,
-	}
-    }
-    
-    if args.len() < 2 + arg_count {
-        println!("Usage: zonediff [-o origin] [-s] [-v] <old zonefile> <new zonefile>");
-        return;
+            "-v" | "--verbose" => {
+                arg_count += 1;
+                verbose = true;
+            },
+            _ => break,
+        }
     }
 
     if origin == "" {
@@ -424,7 +519,8 @@ fn main() {
     let oldfile = File::open(&args[arg_count]).unwrap();
     let newfile = File::open(&args[arg_count + 1]).unwrap();
 
-    let mut differ = Differ::new(&oldfile, &newfile, origin, ignore_serial, skip_dnssec, verbose);
-    differ.diff();
-    differ.print_summary();
+    let mut differ = Differ::new(&oldfile, &newfile, origin, buf_size,
+                                 ignore_serial, skip_dnssec, verbose);
+    differ.compare();
+    differ.print_results();
 }
