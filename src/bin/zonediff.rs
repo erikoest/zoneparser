@@ -414,14 +414,14 @@ impl<'a> Differ<'a> {
     }
 
     fn print_results(&mut self) {
-        let mut some_names = None;
+        let mut some_total = None;
 
         let mut types: Vec<_> = self.count.drain().collect();
         types.sort_by(|(a, _), (b, _)| a.cmp(b));
 
         for (t, mut h) in types {
             if t == RRType::None {
-                some_names.replace(h);
+                some_total.replace(h);
                 continue;
             }
 
@@ -435,10 +435,10 @@ impl<'a> Differ<'a> {
             }
         }
 
-        if let Some(mut names) = some_names {
+        if let Some(mut total) = some_total {
             println!("total:");
 
-            let mut count: Vec<_> = names.drain().collect();
+            let mut count: Vec<_> = total.drain().collect();
             count.sort_by(|(a, _), (b, _)| a.cmp(b));
 
             for (op, c) in count {
