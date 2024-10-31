@@ -37,32 +37,34 @@ fn main() {
 
     let mut rr_count: HashMap::<RRType, u32> = HashMap::new();
     let mut rrset_count: HashMap::<RRType, u32> = HashMap::new();
-    let mut rrset_tmp: HashMap::<RRType, u32> = HashMap::new();
     let mut rr_total = 0;
     let mut rrset_total = 0;
-    let mut last_name = "".to_string();
+    /*
+    Count sets by keeping track of last names by rrtype. So we tolerate
+    different sets of different rrtypes to be mixed.
+     */
+    let mut last_names: HashMap::<RRType, String> = HashMap::new();
 
     let p = ZoneParser::new(&file, origin);
 
     for rr in p {
-	// Count rrs
-	if last_name != rr.name {
-	    // Transfer all temporary rrset counts
-	    for rrtype in rrset_tmp.keys() {
-		if let Some(rrset_c) = rrset_count.get(&rrtype) {
-		    rrset_count.insert(*rrtype, rrset_c + 1);
+	// Count rrset
+        if let Some(last_name) = last_names.get(&rr.rrtype) {
+	    if *last_name != rr.name {
+		if let Some(rrset_c) = rrset_count.get(&rr.rrtype) {
+		    rrset_count.insert(rr.rrtype, rrset_c + 1);
 		}
 		else {
-		    rrset_count.insert(*rrtype, 1);
+		    rrset_count.insert(rr.rrtype, 1);
 		}
 		rrset_total += 1;
-	    }
 
-	    last_name = rr.name;
-
-	    // Clear temporary rrset count
-	    rrset_tmp.clear();
+                last_names.insert(rr.rrtype, rr.name);
+            }
 	}
+        else {
+            last_names.insert(rr.rrtype, rr.name);
+        }
 
         // Count rrs
         if let Some(rr_c) = rr_count.get(&rr.rrtype) {
@@ -71,15 +73,11 @@ fn main() {
         else {
 	    rr_count.insert(rr.rrtype, 1);
         }
-
-	// Count rrsets
-	rrset_tmp.insert(rr.rrtype, 1);
-	
 	rr_total += 1;
     }
 
     // Count the last rrsets
-    for rrtype in rrset_tmp.keys() {
+    for rrtype in last_names.keys() {
 	if let Some(rrset_c) = rrset_count.get(&rrtype) {
 	    rrset_count.insert(*rrtype, rrset_c + 1);
 	}
