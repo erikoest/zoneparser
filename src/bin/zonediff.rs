@@ -122,8 +122,8 @@ impl PartialEq for RecordSet {
 
 enum DiffSection {
     Equal(usize, usize, usize),
-    Delete(usize, usize, usize),
-    Insert(usize, usize, usize),
+    Delete(usize, usize),
+    Insert(usize, usize),
     Replace(usize, usize, usize, usize),
 }
 
@@ -175,16 +175,16 @@ impl Diff for SetDiffer {
         Ok(())
     }
 
-    fn delete(&mut self, old: usize, len: usize, new: usize)
+    fn delete(&mut self, old: usize, len: usize, _: usize)
               -> Result<(), Self::Error> {
-        self.differences.push(DiffSection::Delete(old, len, new));
+        self.differences.push(DiffSection::Delete(old, len));
 
         Ok(())
     }
 
-    fn insert(&mut self, old: usize, new: usize, new_len: usize)
+    fn insert(&mut self, _: usize, new: usize, new_len: usize)
               -> Result<(), Self::Error> {
-        self.differences.push(DiffSection::Insert(old, new, new_len));
+        self.differences.push(DiffSection::Insert(new, new_len));
 
         Ok(())
     }
@@ -371,7 +371,7 @@ impl<'a> Differ<'a> {
                     }
                 }
             },
-            DiffSection::Delete(old, len, _) => {
+            DiffSection::Delete(old, len) => {
                 for i in old..old + len {
                     if self.verbose {
                         self.old[i].print_pf("--");
@@ -381,7 +381,7 @@ impl<'a> Differ<'a> {
                     self.increment(self.old[i].rrtype(), "deleted");
                 }
             },
-            DiffSection::Insert(_, new, new_len) => {
+            DiffSection::Insert(new, new_len) => {
                 for i in new..new + new_len {
                     if self.verbose {
                         self.new[i].print_pf("++");

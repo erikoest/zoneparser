@@ -3,11 +3,10 @@ use std::io::{BufReader, BufRead};
 use std::fmt::{Display, Debug, Formatter};
 use std::collections::HashMap;
 use bstr::ByteSlice;
-use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
+use unit_enum::UnitEnum;
 
 // Numeric representation for rrclass
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, EnumIter, Ord, PartialOrd)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Ord, PartialOrd, UnitEnum)]
 pub enum RRClass {
     #[default]
     IN = 1,
@@ -22,7 +21,8 @@ impl Display for RRClass {
 }
 
 // Numeric representation for rrtype
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, EnumIter, Ord, PartialOrd)]
+#[repr(u16)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, UnitEnum)]
 pub enum RRType {
     #[default]
     None       = 0,
@@ -74,6 +74,8 @@ pub enum RRType {
     WALLET     = 262,
     TA         = 32768,
     DLV        = 32769,
+    #[unit_enum(other)]
+    Unknown(u16)
 }
 
 impl Display for RRType {
@@ -243,27 +245,28 @@ impl<'a> ZoneParser<'a> {
         // Build some lookup tables for classes, types and type bitmaps
 	let mut classes = HashMap::new();
 	
-	for c in RRClass::iter() {
+	for c in RRClass::values() {
 	    classes.insert(format!("{:?}", c).to_lowercase(), c);
 	}
 
 	let mut types = HashMap::new();
 
-	for t in RRType::iter() {
+	for t in RRType::values() {
             let t_str = format!("{:?}", t).to_lowercase();
 	    types.insert(t_str, t);
         }
 
         let mut bm_hash = HashMap::new();
 
-        for t in RRType::iter() {
+        for t in RRType::values() {
             if t == RRType::None {
                 continue;
             }
 
             let t_str = format!("{:?}", t).to_lowercase();
-            let window_block = (t as u16 >> 8) as u8;
-            let bitpos = (t as u16) & 0xff;
+            let t_disc = t.discriminant();
+            let window_block = (t_disc >> 8) as u8;
+            let bitpos = t_disc & 0xff;
             let bm1: u128;
             let bm2: u128;
             if bitpos < 128 {
@@ -311,12 +314,49 @@ impl<'a> ZoneParser<'a> {
     }
 
     pub fn rrtype_from_str(&self, rrtype_str: &str) -> RRType {
-        return *self.rrtype_hash.get(&rrtype_str.to_lowercase()).unwrap();
+        let lcstr = rrtype_str.to_lowercase();
+
+        if let Some(rrtype) = self.rrtype_hash.get(&lcstr) {
+            return *rrtype;
+        }
+        else if lcstr.starts_with("type") {
+            let rrtype = RRType::from_discriminant(
+                lcstr[4..].parse().expect(&format!(
+                    "Unknown type {}", rrtype_str)));
+            return rrtype;
+        }
+        else {
+            panic!("Unknown type {}", rrtype_str);
+        }
     }
 
     // RRType bitmap for NSEC and NSEC3 records
     pub fn rrtype_bm_from_str(&self, rrtype_str: &str) -> (u8, u128, u128) {
-        return *self.rrtype_bm_hash.get(&rrtype_str.to_lowercase()).unwrap();
+        let lcstr = rrtype_str.to_lowercase();
+
+        if let Some(bm) = self.rrtype_bm_hash.get(&lcstr) {
+            return *bm;
+        }
+        else if lcstr.starts_with("type") {
+            let t_disc: u16 = lcstr[4..].parse().expect(&format!(
+                "Unknown type {}", rrtype_str));
+            let window_block = (t_disc >> 8) as u8;
+            let bitpos = t_disc & 0xff;
+            let bm1: u128;
+            let bm2: u128;
+            if bitpos < 128 {
+                bm1 = 1 << (127 - bitpos);
+                bm2 = 0;
+            }
+            else {
+                bm1 = 0;
+                bm2 = 1 << (255 - bitpos);
+            }
+            return (window_block, bm1, bm2);
+        }
+        else {
+            panic!("Unknown type {}", rrtype_str);
+        }
     }
 
     fn parse_line(&mut self, rec: &mut Option<Record>) {
@@ -401,6 +441,17 @@ impl<'a> ZoneParser<'a> {
 			    Record::new(&self.name, self.ttl,
 					self.class, self.rrtype));
 		    }
+                    else if word.starts_with("type") {
+                        // TYPENNN syntax
+                        let rrvalue: u16 = word[4..].parse().expect(&format!(
+                            "Parse error on line {} pos {}",
+                            self.line_no, pos));
+                        self.rrtype = RRType::from_discriminant(rrvalue);
+                        self.state = ParserState::Data;
+			let _ = rec.insert(
+			    Record::new(&self.name, self.ttl,
+					self.class, self.rrtype));
+                    }
 		    else {
 			// Expect TTL
 			self.ttl = word.parse().expect(&format!(
@@ -523,7 +574,7 @@ mod tests {
     #[test]
     fn simple_zone() {
 	let file = File::open("./test_data/simple.zn").unwrap();
-	let mut p = ZoneParser::new(&file);
+	let mut p = ZoneParser::new(&file, "");
 
 	assert_next_rec!(
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::SOA,
@@ -551,7 +602,7 @@ mod tests {
     #[test]
     fn directives() {
 	let file = File::open("./test_data/directives.zn").unwrap();
-	let mut p = ZoneParser::new(&file);
+	let mut p = ZoneParser::new(&file, "");
 
 	assert!(p.next().is_some());
 
@@ -563,7 +614,7 @@ mod tests {
     #[test]
     fn case_insensitivity() {
 	let file = File::open("./test_data/lc_and_uc.zn").unwrap();
-	let mut p = ZoneParser::new(&file);
+	let mut p = ZoneParser::new(&file, "");
 
 	assert_next_rec!(
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::SOA,
@@ -576,7 +627,7 @@ mod tests {
     #[test]
     fn relative_names() {
 	let file = File::open("./test_data/relative.zn").unwrap();
-	let mut p = ZoneParser::new(&file);
+	let mut p = ZoneParser::new(&file, "");
         let mut rr;
 
 	rr = p.next();
@@ -601,7 +652,7 @@ mod tests {
     #[test]
     fn default_values() {
 	let file = File::open("./test_data/directives.zn").unwrap();
-	let mut p = ZoneParser::new(&file);
+	let mut p = ZoneParser::new(&file, "");
 
 	assert!(p.next().is_some());
 
@@ -617,7 +668,7 @@ mod tests {
     #[test]
     fn brackets_and_comments() {
 	let file = File::open("./test_data/brackets_and_comments.zn").unwrap();
-	let mut p = ZoneParser::new(&file);
+	let mut p = ZoneParser::new(&file, "");
 
 	assert_next_rec!(
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::SOA,
@@ -630,7 +681,7 @@ mod tests {
     #[test]
     fn quotes() {
 	let file = File::open("./test_data/quotes.zn").unwrap();
-	let mut p = ZoneParser::new(&file);
+	let mut p = ZoneParser::new(&file, "");
 
         assert_next_rec!(
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,

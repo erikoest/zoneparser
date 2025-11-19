@@ -27,6 +27,5 @@ assets = [
 
 [dependencies]
 bstr = "1.10.0"
-strum = "0.26.3"
-strum_macros = "0.26.4"
 diffs = "0.5.1"
+unit-enum = "1.4.3"
