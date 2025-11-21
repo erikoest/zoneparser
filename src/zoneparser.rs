@@ -359,6 +359,123 @@ impl<'a> ZoneParser<'a> {
         }
     }
 
+    // Stores the unescaped data in self.quoted_buf. Return true if
+    // part ends with an unescaped quote.
+    fn unescape_quoted_data(&mut self, part: &[u8]) -> bool {
+        // Look up instances of '\' and '"'
+        let mut esc_end = false;
+        let mut quote_end = false;
+
+        for p in part.split_inclusive(|&b| b == b'\\' || b == b'"') {
+            let plen = p.len();
+
+            if quote_end {
+                // '" ', '"\n': End of quote part
+                if plen == 1 && (p[0] == b' ' || p[0] == b'\n') {
+                    continue;
+                }
+
+                // '"whatever' -> parse error
+                panic!("Here: Parse error on line {}", self.line_no);
+            }
+
+            if esc_end {
+                // Previous character is '\':
+                if p[0] == b'"' {
+                    // Escaped '"': push '"' into buffer
+                    self.quoted_buf.push('"');
+                    esc_end = false;
+                    continue;
+                }
+
+                if p[0] == b'\\' {
+                    // Escaped '\': push '\' into buffer
+                    self.quoted_buf.push('\\');
+                    esc_end = false;
+                    continue;
+                }
+
+                if p[plen - 1] == b' ' {
+                    // Escaped first char and space ending:
+                    //   push part with space ending
+                    let s = format!("{} ", &p[0..plen - 1].escape_bytes());
+		    self.quoted_buf.push_str(&s);
+                    esc_end = false;
+                    continue;
+                }
+
+                if p[plen - 1] == b'"' {
+                    // Escaped first char and end quote:
+                    //   push part and remember end quote
+		    self.quoted_buf.push_str(
+                        &p[0..plen - 1].escape_bytes().to_string());
+                    quote_end = true;
+                    esc_end = false;
+                    continue;
+                }
+
+                if p[plen - 1] == b'\\' {
+                    // Escaped first char and '\' ending:
+                    //   push part and remember '\' ending
+		    self.quoted_buf.push_str(
+                        &p[0..plen - 1].escape_bytes().to_string());
+                    continue;
+                }
+
+                // Escaped first char:
+                //   push part
+		self.quoted_buf.push_str(&p.escape_bytes().to_string());
+                esc_end = false;
+                continue;
+            }
+
+            // Previous character is not '\'
+            if p[0] == b'"' {
+                // End quote
+                quote_end = true;
+                continue;
+            }
+
+            if p[0] == b'\\' {
+                // Single escape character
+                esc_end = true;
+                continue;
+            }
+
+            if p[plen - 1] == b' ' {
+                // Part with space ending
+                let s = format!("{} ", &p[0..plen - 1].escape_bytes());
+		self.quoted_buf.push_str(&s);
+                continue;
+            }
+
+            if p[plen - 1] == b'"' {
+                // Part with end quote
+		self.quoted_buf.push_str(
+                    &p[0..plen - 1].escape_bytes().to_string());
+                quote_end = true;
+                continue;
+            }
+
+            if p[plen - 1] == b'\\' {
+                // Part ending with escape character
+		self.quoted_buf.push_str(
+                    &p[0..plen - 1].escape_bytes().to_string());
+                esc_end = true;
+                continue;
+            }
+
+            // Clean part
+	    self.quoted_buf.push_str(&p.escape_bytes().to_string());
+        }
+
+        if esc_end {
+            panic!("There: Parse error on line {}", self.line_no);
+        }
+
+        return quote_end;
+    }
+
     fn parse_line(&mut self, rec: &mut Option<Record>) {
 	let mut line: String = "".to_string();
 	let len = self.bufreader.read_line(&mut line).
@@ -479,44 +596,36 @@ impl<'a> ZoneParser<'a> {
 		ParserState::Data => {
 		    if part[0] == b'"' {
 			// Start of quoted string.
-			// FIXME: Check the string for escaped chars,
-			//        erroneous quotes and other errors
-			if part[wlen - 1] == b'"' {
-			    // Got end quote
+                        self.quoted_buf.clear();
+                        let end_quote = self.unescape_quoted_data(&part[1..]);
+                        if end_quote {
+			    // Got end quote.
 			    rec.as_mut().unwrap().push_data(
-				RecordData::from_bytes(&part[1..wlen - 1]));
-			}
-			else {
+			        RecordData::new(&self.quoted_buf));
+                        }
+                        else {
 			    self.state = ParserState::QString;
-			    self.quoted_buf = format!(
-				"{}{}", &part[1..wlen].escape_bytes(),
-                                part[wlen] as char);
 			}
 		    }
 		    else {
 			// Unquoted data
+                        self.quoted_buf.clear();
+                        let end_quote = self.unescape_quoted_data(
+                            &part[0..wlen]);
+                        if end_quote {
+                            self.quoted_buf.push('"');
+                        }
 			rec.as_mut().unwrap().push_data(
-			    RecordData::from_bytes(&part[0..wlen]));
+			    RecordData::new(&self.quoted_buf));
 		    }
 		},
 		ParserState::QString => {
-		    // Continuation of quoted string. Look for end quote.
-		    if part[wlen - 1] == b'"' {
+                    let end_quote = self.unescape_quoted_data(part);
+                    if end_quote {
 			// Got end quote
-			let s = format!(
-                            "{}", &part[0..wlen - 1].escape_bytes());
-			self.quoted_buf.push_str(&s);
 			rec.as_mut().unwrap().push_data(
 			    RecordData::new(&self.quoted_buf));
 			self.state = ParserState::Data;
-		    }
-		    else {
-			// No end quote. Just concatenate the whole part. We
-			// expect the next word to continue the string.
-			let s = format!(
-                            "{}{}", &part[0..wlen].escape_bytes(),
-                            part[wlen] as char);
-			self.quoted_buf.push_str(&s);
 		    }
 		},
 	    }
@@ -688,5 +797,50 @@ mod tests {
 	    "first quote", "Second QUOTE", "3. qt");
 
     	assert!(p.next().is_none());
+    }
+
+    #[test]
+    fn anonymous_type() {
+	let file = File::open("./test_data/anonymous_type.zn").unwrap();
+	let mut p = ZoneParser::new(&file, "");
+
+        assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::Unknown(65535),
+	    "#", "5", "0102FFFEFC");
+
+        assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::Unknown(65534),
+            "#", "6", "01020304ABCD");
+
+        assert!(p.next().is_none());
+    }
+
+    #[test]
+    fn escaped_data() {
+	let file = File::open("./test_data/escaped_data.zn").unwrap();
+	let mut p = ZoneParser::new(&file, "");
+
+        assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,
+	    "foo bar\"baz", "foo bar");
+
+        assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,
+            "foo\"", "foo", "");
+
+        assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,
+            "\"", "\\foo", "foobar", "foo bar");
+
+        assert!(p.next().is_none());
+    }
+
+    #[test]
+    #[should_panic]
+    fn escape_error() {
+	let file = File::open("./test_data/escape_error.zn").unwrap();
+	let mut p = ZoneParser::new(&file, "");
+
+	p.next();
     }
 }
