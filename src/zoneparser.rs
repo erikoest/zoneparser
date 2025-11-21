@@ -536,7 +536,7 @@ impl<'a> ZoneParser<'a> {
 			    // If the name is empty, use the name from
 			    // the last record
 			    if wlen > 0 {
-				self.name = word;
+				self.name = self.absolute_name(&word);
 			    }
 
 			    self.state = ParserState::Common;

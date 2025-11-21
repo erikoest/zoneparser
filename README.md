@@ -37,7 +37,6 @@ and `zonediff`.
 - Only the common record fields are parsed. Content specific to the
   record types are returned as anonymous data fields. A later version
   might support parsing the data content as a secondary function call.
-- Relative names are not converted to absolute ones.
 
 ## Contributing
 
