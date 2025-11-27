@@ -5,6 +5,7 @@ use std::fs::File;
 use diffs::{Diff, myers::diff};
 use std::collections::HashMap;
 use core::ops::Index;
+use std::process::ExitCode;
 
 use zoneparser::{ZoneParser, Record, RecordData, RRType};
 
@@ -229,7 +230,7 @@ impl<'a> Ring<'a> {
         }
     }
 
-    fn read_zone_records(&mut self) {
+    fn read_zone_records(&mut self) -> Result<(), String> {
         let mut name = "".to_string();
         let mut rrtype = RRType::None;
 
@@ -239,7 +240,13 @@ impl<'a> Ring<'a> {
             rrtype = last.rrtype();
         }
 
-        while let Some(mut r) = self.parser.next() {
+        while let Some(result) = self.parser.next() {
+            if let Err(e) = result {
+                return Err(e);
+            }
+
+            let mut r = result.unwrap();
+
             if self.skip_dnssec && (r.rrtype == RRType::NSEC ||
                                     r.rrtype == RRType::NSEC3 ||
                                     r.rrtype == RRType::RRSIG) {
@@ -286,6 +293,8 @@ impl<'a> Ring<'a> {
         else {
             self.at_end = true;
         }
+
+        return Ok(());
     }
 
     fn push(&mut self, e: RecordSet) {
@@ -447,10 +456,15 @@ impl<'a> Differ<'a> {
         }
     }
 
-    fn compare(&mut self) {
+    fn compare(&mut self) -> Result<(), String> {
         while !self.old.at_end && !self.new.at_end {
-            self.old.read_zone_records();
-            self.new.read_zone_records();
+            if let Err(e) = self.old.read_zone_records() {
+                return Err(e);
+            }
+
+            if let Err(e) = self.new.read_zone_records() {
+                return Err(e);
+            }
 
             let mut sd = SetDiffer::new();
 
@@ -472,10 +486,12 @@ impl<'a> Differ<'a> {
             self.old.set_tail(sd.old_tail);
             self.new.set_tail(sd.new_tail);
         }
+
+        return Ok(());
     }
 }
 
-fn main() {
+fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
 
     let mut origin = "";
@@ -512,15 +528,29 @@ fn main() {
         }
     }
 
+    if args.len() != arg_count + 2 {
+        println!("Usage: zonediff [-o origin] [-b buffer_size] [-s] [-d] [-v]");
+        println!("    <old_zone> <new_zone>");
+        return 10.into();
+    }
+
     if origin == "" {
         origin = &args[arg_count];
     }
 
-    let oldfile = File::open(&args[arg_count]).unwrap();
-    let newfile = File::open(&args[arg_count + 1]).unwrap();
+    let oldfile = File::open(&args[arg_count]).expect(
+        &format!("Could not open file {}", &args[arg_count]));
+    let newfile = File::open(&args[arg_count + 1]).expect(
+        &format!("Could not open file {}", &args[arg_count + 1]));
 
     let mut differ = Differ::new(&oldfile, &newfile, origin, buf_size,
                                  ignore_serial, skip_dnssec, verbose);
-    differ.compare();
+    if let Err(e) = differ.compare() {
+        println!("Parse error: {}", e);
+        return 255.into();
+    }
+
     differ.print_results();
+
+    return 0.into();
 }

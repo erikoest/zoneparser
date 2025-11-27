@@ -15,10 +15,18 @@ use zoneparser::ZoneParser;
 
 fn main() {
   let file = File::open("my-zone.no").unwrap();
-  let p = ZoneParser::new(&file);
+  let p = ZoneParser::new(&file, "my-zone.no");
 
-  for rr in p {
-    println!("{}", rr);
+  for next in p {
+    match next {
+      Err(e) => {
+        println!("Parse error: {}", e);
+        break;
+      },
+      Ok(rr) => {
+        println!("{}", rr);
+      },
+    }
   }
 }
 ```
@@ -26,14 +34,8 @@ fn main() {
 For further examples, see the included command line tools `zonecount`
 and `zonediff`.
 
-## Bugs
-
-- Escaped characters and octal number representations in the zonefile are
-  not well handled.
-
 ## Missing features
 
-- Error handling is rather crude. Parse errors cause panic.
 - Only the common record fields are parsed. Content specific to the
   record types are returned as anonymous data fields. A later version
   might support parsing the data content as a secondary function call.
