@@ -12,6 +12,7 @@ pub enum RRClass {
     IN  = 1,
     CH  = 3,
     HS  = 4,
+    ANY = 255,
 }
 
 impl Display for RRClass {
@@ -68,6 +69,7 @@ pub enum RRType {
     EUI48      = 108,
     EUI164     = 109,
     TKEY       = 249,
+    TSIG       = 250,
     URI        = 256,
     CAA        = 257,
     WALLET     = 262,
