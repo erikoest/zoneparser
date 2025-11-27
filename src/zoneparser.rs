@@ -399,6 +399,27 @@ impl<'a> ZoneParser<'a> {
                     continue;
                 }
 
+                let mut remaining = 0;
+                static OCTAL1: std::ops::Range<u8> = b'0'..b'4';
+                static OCTAL2: std::ops::Range<u8> = b'0'..b'8';
+
+                if plen >= 3 {
+                    if OCTAL1.contains(&p[0]) &&
+                       OCTAL2.contains(&p[1]) &&
+                       OCTAL2.contains(&p[2]) {
+                        let i = 64*(p[0] - b'0') + 8*(p[1] - b'0') +
+                            (p[2] - b'0');
+                        // Occurence of escaped octal number representation
+                        self.quoted_buf.push(i as char);
+                        remaining = 3;
+                        if remaining == plen {
+                            quote_end = false;
+                            esc_end = false;
+                            continue;
+                        }
+                    }
+                }
+
                 if p[plen - 1] == b' ' {
                     // Escaped first char and space ending:
                     //   push part with space ending
@@ -412,7 +433,7 @@ impl<'a> ZoneParser<'a> {
                     // Escaped first char and end quote:
                     //   push part and remember end quote
 		    self.quoted_buf.push_str(
-                        &p[0..plen - 1].escape_bytes().to_string());
+                        &p[remaining..plen - 1].escape_bytes().to_string());
                     quote_end = true;
                     esc_end = false;
                     continue;
@@ -422,14 +443,14 @@ impl<'a> ZoneParser<'a> {
                     // Escaped first char and '\' ending:
                     //   push part and remember '\' ending
 		    self.quoted_buf.push_str(
-                        &p[0..plen - 1].escape_bytes().to_string());
+                        &p[remaining..plen - 1].escape_bytes().to_string());
                     continue;
                 }
 
                 // Escaped first char:
                 //   push part
 		self.quoted_buf.push_str(
-                    &p[0..plen].escape_bytes().to_string());
+                    &p[remaining..plen].escape_bytes().to_string());
                 esc_end = false;
                 continue;
             }
