@@ -20,12 +20,24 @@ depends = "$auto"
 section = "utility"
 priority = "optional"
 assets = [
-    ["target/release/zonediff", "usr/bin/", "755"],
-    ["target/release/zonecount", "usr/bin/", "755"],
-    ["README.md", "usr/share/doc/zoneparser/README", "644"],
+    [
+        "target/release/zonediff",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "target/release/zonecount",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "README.md",
+        "usr/share/doc/zoneparser/README",
+        "644",
+    ],
 ]
 
 [dependencies]
-bstr = "1.10.0"
+bstr = "1.12.1"
 diffs = "0.5.1"
 unit-enum = "1.4.3"
