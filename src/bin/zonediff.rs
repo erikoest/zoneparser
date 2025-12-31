@@ -1,13 +1,13 @@
 extern crate zoneparser;
 
+use core::ops::Index;
+use diffs::{myers::diff, Diff};
+use std::collections::HashMap;
 use std::env;
 use std::fs::File;
-use diffs::{Diff, myers::diff};
-use std::collections::HashMap;
-use core::ops::Index;
 use std::process::ExitCode;
 
-use zoneparser::{ZoneParser, Record, RecordData, RRType};
+use zoneparser::{RRType, Record, RecordData, ZoneParser};
 
 struct RecordDiffer<'a> {
     old: &'a Vec<Record>,
@@ -30,13 +30,11 @@ impl<'a> RecordDiffer<'a> {
 impl<'a> Diff for RecordDiffer<'a> {
     type Error = ();
 
-    fn equal(&mut self, _: usize, _: usize, _: usize)
-             -> Result<(), Self::Error> {
+    fn equal(&mut self, _: usize, _: usize, _: usize) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn delete(&mut self, old: usize, len: usize, _: usize)
-              -> Result<(), Self::Error> {
+    fn delete(&mut self, old: usize, len: usize, _: usize) -> Result<(), Self::Error> {
         self.has_changes = true;
 
         if self.verbose {
@@ -48,8 +46,7 @@ impl<'a> Diff for RecordDiffer<'a> {
         Ok(())
     }
 
-    fn insert(&mut self, _: usize, new: usize, new_len: usize)
-              -> Result<(), Self::Error> {
+    fn insert(&mut self, _: usize, new: usize, new_len: usize) -> Result<(), Self::Error> {
         self.has_changes = true;
 
         if self.verbose {
@@ -61,8 +58,13 @@ impl<'a> Diff for RecordDiffer<'a> {
         Ok(())
     }
 
-    fn replace(&mut self, old: usize, old_len: usize,
-               new: usize, new_len: usize) -> Result<(), Self::Error> {
+    fn replace(
+        &mut self,
+        old: usize,
+        old_len: usize,
+        new: usize,
+        new_len: usize,
+    ) -> Result<(), Self::Error> {
         self.has_changes = true;
 
         if self.verbose {
@@ -81,7 +83,6 @@ impl<'a> Diff for RecordDiffer<'a> {
     fn finish(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
-
 }
 
 struct RecordSet {
@@ -90,9 +91,7 @@ struct RecordSet {
 
 impl RecordSet {
     fn new() -> Self {
-        Self {
-            set: vec!(),
-        }
+        Self { set: vec![] }
     }
 
     fn push(&mut self, r: Record) {
@@ -116,8 +115,7 @@ impl RecordSet {
 
 impl PartialEq for RecordSet {
     fn eq(&self, other: &RecordSet) -> bool {
-        return (self.name() == other.name()) &&
-            (self.rrtype() == other.rrtype());
+        return (self.name() == other.name()) && (self.rrtype() == other.rrtype());
     }
 }
 
@@ -137,7 +135,7 @@ struct SetDiffer {
 impl SetDiffer {
     fn new() -> Self {
         Self {
-            differences: vec!(),
+            differences: vec![],
             old_tail: 0,
             new_tail: 0,
         }
@@ -152,15 +150,15 @@ impl SetDiffer {
                     self.old_tail = old + len;
                     self.new_tail = new + len;
                     break;
-                },
+                }
                 None => {
                     // Buffers must contain at least one equal section.
                     // If not, the buffer size is not big enough.
                     panic!("Too many differences. Buffer overflow.");
-                },
+                }
                 _ => {
                     self.differences.pop().unwrap();
-                },
+                }
             }
         }
     }
@@ -169,30 +167,33 @@ impl SetDiffer {
 impl Diff for SetDiffer {
     type Error = ();
 
-    fn equal(&mut self, old: usize, new: usize, len: usize)
-             -> Result<(), Self::Error> {
+    fn equal(&mut self, old: usize, new: usize, len: usize) -> Result<(), Self::Error> {
         self.differences.push(DiffSection::Equal(old, new, len));
 
         Ok(())
     }
 
-    fn delete(&mut self, old: usize, len: usize, _: usize)
-              -> Result<(), Self::Error> {
+    fn delete(&mut self, old: usize, len: usize, _: usize) -> Result<(), Self::Error> {
         self.differences.push(DiffSection::Delete(old, len));
 
         Ok(())
     }
 
-    fn insert(&mut self, _: usize, new: usize, new_len: usize)
-              -> Result<(), Self::Error> {
+    fn insert(&mut self, _: usize, new: usize, new_len: usize) -> Result<(), Self::Error> {
         self.differences.push(DiffSection::Insert(new, new_len));
 
         Ok(())
     }
 
-    fn replace(&mut self, old: usize, old_len: usize,
-               new: usize, new_len: usize) -> Result<(), Self::Error> {
-        self.differences.push(DiffSection::Replace(old, old_len, new, new_len));
+    fn replace(
+        &mut self,
+        old: usize,
+        old_len: usize,
+        new: usize,
+        new_len: usize,
+    ) -> Result<(), Self::Error> {
+        self.differences
+            .push(DiffSection::Replace(old, old_len, new, new_len));
 
         Ok(())
     }
@@ -215,11 +216,16 @@ struct Ring<'a> {
 }
 
 impl<'a> Ring<'a> {
-    fn new(file: &'a File, origin: &str, buf_size: usize,
-           ignore_serial: bool, skip_dnssec: bool) -> Self {
+    fn new(
+        file: &'a File,
+        origin: &str,
+        buf_size: usize,
+        ignore_serial: bool,
+        skip_dnssec: bool,
+    ) -> Self {
         Self {
             parser: ZoneParser::new(&file, origin),
-            data: vec!(),
+            data: vec![],
             tail: 0,
             head: 0,
             buf_size: buf_size,
@@ -247,9 +253,11 @@ impl<'a> Ring<'a> {
 
             let mut r = result.unwrap();
 
-            if self.skip_dnssec && (r.rrtype == RRType::NSEC ||
-                                    r.rrtype == RRType::NSEC3 ||
-                                    r.rrtype == RRType::RRSIG) {
+            if self.skip_dnssec
+                && (r.rrtype == RRType::NSEC
+                    || r.rrtype == RRType::NSEC3
+                    || r.rrtype == RRType::RRSIG)
+            {
                 continue;
             }
 
@@ -260,8 +268,7 @@ impl<'a> Ring<'a> {
             if self.last.is_some() {
                 if r.name == name && r.rrtype == rrtype {
                     self.last.as_mut().unwrap().push(r);
-                }
-                else {
+                } else {
                     name = r.name.clone();
                     rrtype = r.rrtype;
                     let mut newset = RecordSet::new();
@@ -275,8 +282,7 @@ impl<'a> Ring<'a> {
                         break;
                     }
                 }
-            }
-            else {
+            } else {
                 let mut set = RecordSet::new();
                 set.push(r);
                 let _ = self.last.insert(set);
@@ -289,8 +295,7 @@ impl<'a> Ring<'a> {
                 self.push(last);
                 self.at_end = true;
             }
-        }
-        else {
+        } else {
             self.at_end = true;
         }
 
@@ -301,12 +306,13 @@ impl<'a> Ring<'a> {
         if self.head < self.buf_size {
             self.data.push(e);
             self.head += 1;
-        }
-        else {
+        } else {
             self.data[self.head % self.buf_size] = e;
             self.head += 1;
-            assert!(self.head - self.tail <= self.buf_size,
-                    "Ring buffer overflow");
+            assert!(
+                self.head - self.tail <= self.buf_size,
+                "Ring buffer overflow"
+            );
         }
     }
 
@@ -331,13 +337,18 @@ struct Differ<'a> {
 }
 
 impl<'a> Differ<'a> {
-    fn new(oldfile: &'a File, newfile: &'a File, origin: &str, buf_size: usize,
-               ignore_serial: bool, skip_dnssec: bool, verbose: bool) -> Self {
+    fn new(
+        oldfile: &'a File,
+        newfile: &'a File,
+        origin: &str,
+        buf_size: usize,
+        ignore_serial: bool,
+        skip_dnssec: bool,
+        verbose: bool,
+    ) -> Self {
         Self {
-            old: Ring::new(&oldfile, origin, buf_size, ignore_serial,
-                           skip_dnssec),
-            new: Ring::new(&newfile, origin, buf_size, ignore_serial,
-                           skip_dnssec),
+            old: Ring::new(&oldfile, origin, buf_size, ignore_serial, skip_dnssec),
+            new: Ring::new(&newfile, origin, buf_size, ignore_serial, skip_dnssec),
             count: HashMap::new(),
             verbose: verbose,
         }
@@ -347,12 +358,10 @@ impl<'a> Differ<'a> {
         if let Some(v1) = self.count.get_mut(&k1) {
             if let Some(c) = v1.get(k2) {
                 v1.insert(k2.to_string(), c + 1);
-            }
-            else {
+            } else {
                 v1.insert(k2.to_string(), 1);
             }
-        }
-        else {
+        } else {
             let mut m = HashMap::new();
             m.insert(k2.to_string(), 1);
             self.count.insert(k1, m);
@@ -365,21 +374,29 @@ impl<'a> Differ<'a> {
                 // The same sets are found in old and new zonefile.
                 // Compare sets by record.
                 for i in 0..len {
-                    let mut rd = RecordDiffer::new(&self.old[old + i].set,
-                                                   &self.new[new + i].set,
-                                                   self.verbose);
+                    let mut rd = RecordDiffer::new(
+                        &self.old[old + i].set,
+                        &self.new[new + i].set,
+                        self.verbose,
+                    );
 
-                    diff(&mut rd,
-                         &self.old[old + i].set, 0, self.old[old + i].set.len(),
-                         &self.new[new + i].set, 0, self.new[new + i].set.len()
-                    ).unwrap();
+                    diff(
+                        &mut rd,
+                        &self.old[old + i].set,
+                        0,
+                        self.old[old + i].set.len(),
+                        &self.new[new + i].set,
+                        0,
+                        self.new[new + i].set.len(),
+                    )
+                    .unwrap();
 
                     if rd.has_changes {
                         self.increment(RRType::None, "changed");
                         self.increment(self.old[old + i].rrtype(), "changed");
                     }
                 }
-            },
+            }
             DiffSection::Delete(old, len) => {
                 for i in old..old + len {
                     if self.verbose {
@@ -389,7 +406,7 @@ impl<'a> Differ<'a> {
                     self.increment(RRType::None, "deleted");
                     self.increment(self.old[i].rrtype(), "deleted");
                 }
-            },
+            }
             DiffSection::Insert(new, new_len) => {
                 for i in new..new + new_len {
                     if self.verbose {
@@ -399,7 +416,7 @@ impl<'a> Differ<'a> {
                     self.increment(RRType::None, "added");
                     self.increment(self.new[i].rrtype(), "added");
                 }
-            },
+            }
             DiffSection::Replace(old, old_len, new, new_len) => {
                 for i in old..old + old_len {
                     if self.verbose {
@@ -468,10 +485,16 @@ impl<'a> Differ<'a> {
 
             let mut sd = SetDiffer::new();
 
-            diff(&mut sd,
-                 &self.old, self.old.tail, self.old.head,
-                 &self.new, self.new.tail, self.new.head
-            ).unwrap();
+            diff(
+                &mut sd,
+                &self.old,
+                self.old.tail,
+                self.old.head,
+                &self.new,
+                self.new.tail,
+                self.new.head,
+            )
+            .unwrap();
 
             if !self.old.at_end || !self.new.at_end {
                 // If we haven't parsed all sections, the last differences
@@ -507,7 +530,7 @@ fn main() -> ExitCode {
             "-o" | "--origin" => {
                 origin = &args[arg_count + 1];
                 arg_count += 2;
-            },
+            }
             "-b" | "--buffer-size" => {
                 buf_size = args[arg_count + 1].parse().unwrap();
                 arg_count += 2;
@@ -515,7 +538,7 @@ fn main() -> ExitCode {
             "-s" | "--ignore-serial" => {
                 arg_count += 1;
                 ignore_serial = true;
-            },
+            }
             "-d" | "--skip-dnssec" => {
                 arg_count += 1;
                 skip_dnssec = true;
@@ -523,7 +546,7 @@ fn main() -> ExitCode {
             "-v" | "--verbose" => {
                 arg_count += 1;
                 verbose = true;
-            },
+            }
             _ => break,
         }
     }
@@ -538,13 +561,20 @@ fn main() -> ExitCode {
         origin = &args[arg_count];
     }
 
-    let oldfile = File::open(&args[arg_count]).expect(
-        &format!("Could not open file {}", &args[arg_count]));
-    let newfile = File::open(&args[arg_count + 1]).expect(
-        &format!("Could not open file {}", &args[arg_count + 1]));
+    let oldfile =
+        File::open(&args[arg_count]).expect(&format!("Could not open file {}", &args[arg_count]));
+    let newfile = File::open(&args[arg_count + 1])
+        .expect(&format!("Could not open file {}", &args[arg_count + 1]));
 
-    let mut differ = Differ::new(&oldfile, &newfile, origin, buf_size,
-                                 ignore_serial, skip_dnssec, verbose);
+    let mut differ = Differ::new(
+        &oldfile,
+        &newfile,
+        origin,
+        buf_size,
+        ignore_serial,
+        skip_dnssec,
+        verbose,
+    );
     if let Err(e) = differ.compare() {
         println!("Parse error: {}", e);
         return 255.into();

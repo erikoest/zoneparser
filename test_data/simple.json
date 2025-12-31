@@ -1,0 +1,86 @@
+[
+  {
+    "name": "simple.zn.",
+    "ttl": 3600,
+    "class": "IN",
+    "rrtype": "SOA",
+    "data": [
+      {
+        "data": "ns1.simple.zn."
+      },
+      {
+        "data": "hostmaster.simple.zn."
+      },
+      {
+        "data": "2024090906"
+      },
+      {
+        "data": "7200"
+      },
+      {
+        "data": "1800"
+      },
+      {
+        "data": "86400"
+      },
+      {
+        "data": "7200"
+      }
+    ]
+  },
+  {
+    "name": "simple.zn.",
+    "ttl": 3600,
+    "class": "IN",
+    "rrtype": "NS",
+    "data": [
+      {
+        "data": "ns1.simple.zn."
+      }
+    ]
+  },
+  {
+    "name": "simple.zn.",
+    "ttl": 3600,
+    "class": "IN",
+    "rrtype": "NS",
+    "data": [
+      {
+        "data": "ns2.simple.zn."
+      }
+    ]
+  },
+  {
+    "name": "info.simple.zn.",
+    "ttl": 3600,
+    "class": "IN",
+    "rrtype": "MX",
+    "data": [
+      {
+        "data": "mail.simple.zn."
+      }
+    ]
+  },
+  {
+    "name": "mail.simple.zn.",
+    "ttl": 3600,
+    "class": "IN",
+    "rrtype": "A",
+    "data": [
+      {
+        "data": "1.2.3.4"
+      }
+    ]
+  },
+  {
+    "name": "mail.simple.zn.",
+    "ttl": 3600,
+    "class": "IN",
+    "rrtype": "AAAA",
+    "data": [
+      {
+        "data": "1:2:3:4"
+      }
+    ]
+  }
+]
