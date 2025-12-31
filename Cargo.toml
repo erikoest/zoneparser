@@ -40,4 +40,11 @@ assets = [
 [dependencies]
 bstr = "1.12.1"
 diffs = "0.5.1"
+serde = { version = "1.0.228", features = ["derive"], optional = true }
 unit-enum = "1.4.3"
+
+[dev-dependencies]
+serde_json = "1.0.148"
+
+[features]
+serde = ["dep:serde"]

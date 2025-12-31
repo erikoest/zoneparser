@@ -5,8 +5,12 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use unit_enum::UnitEnum;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 // Numeric representation for rrclass
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Ord, PartialOrd, UnitEnum)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum RRClass {
     #[default]
     IN = 1,
@@ -24,6 +28,7 @@ impl Display for RRClass {
 // Numeric representation for rrtype
 #[repr(u16)]
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, UnitEnum)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum RRType {
     #[default]
     None = 0,
@@ -86,6 +91,7 @@ impl Display for RRType {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RecordData {
     pub data: String,
 }
@@ -117,6 +123,7 @@ impl Display for RecordData {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Record {
     pub name: String,
     pub ttl: u32,
@@ -769,6 +776,20 @@ mod tests {
         );
 
         assert!(p.next().is_none());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn simple_zone_serde() {
+        let file = File::open("./test_data/simple.zn").unwrap();
+        let p = ZoneParser::new(&file, "");
+
+        let records: Vec<_> = p.collect::<Result<Vec<_>, _>>().unwrap();
+        let serialized = serde_json::to_string_pretty(&records).unwrap();
+        assert_eq!(
+            serialized,
+            std::fs::read_to_string("test_data/simple.json").unwrap()
+        );
     }
 
     #[test]
