@@ -205,7 +205,7 @@ pub struct ZoneParser<'a> {
     // Current type
     rrtype: RRType,
     // Bracket count
-    b_count: u16,
+    b_count: u32,
     // End of stream flag
     end_of_stream: bool,
     // Parser state
@@ -312,8 +312,15 @@ impl<'a> ZoneParser<'a> {
 	}
     }
 
-    pub fn rrclass_from_str(&self, rrclass_str: &str) -> RRClass {
-        return *self.rrclass_hash.get(&rrclass_str.to_lowercase()).unwrap();
+    pub fn rrclass_from_str(&self, rrclass_str: &str)
+                            -> Result<RRClass, String> {
+        if let Some(rrclass) = self.rrclass_hash.get(
+            &rrclass_str.to_lowercase()) {
+            return Ok(*rrclass);
+        }
+        else {
+            return Err(format!("Unknown class {}", rrclass_str));
+        }
     }
 
     pub fn rrtype_from_str(&self, rrtype_str: &str) -> Result<RRType, String> {
@@ -324,8 +331,8 @@ impl<'a> ZoneParser<'a> {
         }
         else if lcstr.starts_with("type") {
             let rrtype = RRType::from_discriminant(
-                lcstr[4..].parse().expect(&format!(
-                    "Unknown type {}", rrtype_str)));
+                lcstr[4..].parse().or(Err(format!(
+                    "Unknown type {}", rrtype_str)))?);
             return Ok(rrtype);
         }
         else {
@@ -342,8 +349,8 @@ impl<'a> ZoneParser<'a> {
             return Ok(*bm);
         }
         else if lcstr.starts_with("type") {
-            let t_disc: u16 = lcstr[4..].parse().expect(&format!(
-                "Unknown type {}", rrtype_str));
+            let t_disc: u16 = lcstr[4..].parse().or(Err(format!(
+                "Unknown type {}", rrtype_str)))?;
             let window_block = (t_disc >> 8) as u8;
             let bitpos = t_disc & 0xff;
             let bm1: u128;
@@ -400,23 +407,33 @@ impl<'a> ZoneParser<'a> {
                 }
 
                 let mut remaining = 0;
-                static OCTAL1: std::ops::Range<u8> = b'0'..b'4';
-                static OCTAL2: std::ops::Range<u8> = b'0'..b'8';
 
-                if plen >= 3 {
-                    if OCTAL1.contains(&p[0]) &&
-                       OCTAL2.contains(&p[1]) &&
-                       OCTAL2.contains(&p[2]) {
-                        let i = 64*(p[0] - b'0') + 8*(p[1] - b'0') +
-                            (p[2] - b'0');
-                        // Occurence of escaped octal number representation
-                        self.quoted_buf.push(i as char);
-                        remaining = 3;
-                        if remaining == plen {
-                            quote_end = false;
-                            esc_end = false;
-                            continue;
-                        }
+                if p[0].is_ascii_digit() {
+                    // Ascii digit following escape: Expect exactly three
+                    // digits which together form a decimal number representing
+                    // a byte.
+                    if plen < 3 {
+                        return Err(format!("Invalid byte escaping on line {}",
+                                           self.line_no));
+                    }
+                    let text = std::str::from_utf8(&p[0..3]).or(
+                        Err(format!("Invalid byte escaping on line {}",
+                                    self.line_no)))?;
+
+                    let i: u8 = text.parse().or(
+                        Err(format!("Invalid byte escaping on line {}",
+                                    self.line_no)))?;
+
+                    // Occurence of escaped decimal number representation
+                    // Note: The representation here is decimal and not octal,
+                    // ref RFC 1035.
+                    self.quoted_buf.push_str(&i.escape_ascii().to_string());
+
+                    remaining = 3;
+                    if remaining == plen {
+                        esc_end = false;
+                        quote_end = false;
+                        continue;
                     }
                 }
 
@@ -505,7 +522,7 @@ impl<'a> ZoneParser<'a> {
     fn parse_line(&mut self, rec: &mut Option<Record>) -> Result<(), String> {
 	let mut line: String = "".to_string();
 	let len = self.bufreader.read_line(&mut line).
-	    expect("Error reading zonefile");
+	    or(Err(format!("Read error on line {}", self.line_no + 1)))?;
 	if len == 0 {
 	    self.end_of_stream = true;
 	    return Ok(());
@@ -531,11 +548,18 @@ impl<'a> ZoneParser<'a> {
 		    wlen -= 1;
 		},
 		b'(' => {
-		    self.b_count += 1;
+                    self.b_count += 1;
+                    if self.b_count > 1000 {
+                        return Err(
+                            format!("'(' bracket overflow on line {} pos {}",
+                                    self.line_no, pos));
+                    }
 		    wlen -= 1;
 		},
 		b')' => {
-		    self.b_count -= 1;
+		    self.b_count = self.b_count.checked_sub(1).ok_or(
+                        format!("Unmatched ')' on line {} pos {}",
+                                self.line_no, pos))?;
 		    wlen -= 1;
 		},
 		_ => { },
@@ -548,21 +572,20 @@ impl<'a> ZoneParser<'a> {
 
 	    match self.state {
 		ParserState::Init => {
-		    let word = part[0..wlen].escape_bytes().to_string()
-			.to_lowercase();
+		    let word = part[0..wlen].escape_bytes().to_string();
 		    // Parse the common part of the record
 		    if pos == 0 && self.b_count == 0 {
 			// Start of record. Expect word to be the domain name
 			if word.starts_with('$') {
 			    // Lines starting with $ is a directive
-			    self.directive_buf = word;
+			    self.directive_buf = word.to_uppercase();
 			    self.state = ParserState::Directive;
 			}
 			else {
 			    // If the name is empty, use the name from
 			    // the last record
 			    if wlen > 0 {
-				self.name = self.absolute_name(&word);
+				self.name = self.absolute_name(&word)?;
 			    }
 
 			    self.state = ParserState::Common;
@@ -586,9 +609,9 @@ impl<'a> ZoneParser<'a> {
 		    }
                     else if word.starts_with("type") {
                         // TYPENNN syntax
-                        let rrvalue: u16 = word[4..].parse().expect(&format!(
+                        let rrvalue: u16 = word[4..].parse().or(Err(format!(
                             "Expected TYPE<NUM> on line {} pos {}",
-                            self.line_no, pos));
+                            self.line_no, pos)))?;
                         self.rrtype = RRType::from_discriminant(rrvalue);
                         self.state = ParserState::Data;
 			let _ = rec.insert(
@@ -604,15 +627,30 @@ impl<'a> ZoneParser<'a> {
 		},
 		ParserState::Directive => {
 		    // Parsing a directive line.
-		    let value = part[0..wlen].escape_bytes().to_string().
-			to_lowercase();
-		    if self.directive_buf == "$ttl" {
+		    let value = part[0..wlen].escape_bytes().to_string();
+		    if self.directive_buf == "$TTL" {
 			self.default_ttl = value.parse().or(
                             Err(format!("Unexpected content on line {} pos {}",
                                         self.line_no, pos)))?;
 		    }
-		    else if self.directive_buf == "$origin" {
-			self.origin = value;
+		    else if self.directive_buf == "$ORIGIN" {
+                        match value.chars().last() {
+			    Some('.') => {
+                                self.origin = value;
+                            },
+                            Some(_) => {
+                                if self.origin == "." {
+                                    self.origin = format!("{}.", value);
+                                }
+                                else {
+                                    self.origin = format!("{}.{}", value,
+                                                          self.origin);
+                                }
+                            },
+                            None => {
+                                return Err(format!("Internal error."));
+                            }
+                        }
 		    }
 		    else {
                         return Err(format!("Unknown directive {}",
@@ -629,6 +667,7 @@ impl<'a> ZoneParser<'a> {
 			    // Got end quote.
 			    rec.as_mut().unwrap().push_data(
 			        RecordData::new(&self.quoted_buf));
+                            self.quoted_buf.clear();
                         }
                         else {
 			    self.state = ParserState::QString;
@@ -644,6 +683,7 @@ impl<'a> ZoneParser<'a> {
                         }
 			rec.as_mut().unwrap().push_data(
 			    RecordData::new(&self.quoted_buf));
+                        self.quoted_buf.clear();
 		    }
 		},
 		ParserState::QString => {
@@ -652,6 +692,7 @@ impl<'a> ZoneParser<'a> {
 			// Got end quote
 			rec.as_mut().unwrap().push_data(
 			    RecordData::new(&self.quoted_buf));
+                        self.quoted_buf.clear();
 			self.state = ParserState::Data;
 		    }
 		},
@@ -660,21 +701,28 @@ impl<'a> ZoneParser<'a> {
             pos += plen;
 	}
 
+        if self.b_count == 0 && !self.quoted_buf.is_empty() {
+            return Err(format!("Unexpected end of rdata on line {} pos {}",
+                               self.line_no, pos));
+        }
+
         return Ok(());
     }
 
-    pub fn absolute_name(&self, name: &str) -> String {
-	assert!(name != "");
+    pub fn absolute_name(&self, name: &str) -> Result<String, String> {
+        if name.is_empty() {
+            return Err("Empty string.".to_string());
+        }
 
 	if name == "@" {
-	    return self.origin.clone();
+	    return Ok(self.origin.clone());
 	}
 
 	if name.ends_with('.') {
-	    return name.to_string();
+	    return Ok(name.to_string());
 	}
 	else {
-	    return format!("{}.{}", name, self.origin);
+	    return Ok(format!("{}.{}", name, self.origin));
 	}
     }
 }
@@ -726,7 +774,8 @@ mod tests {
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::NS, "ns2.simple.zn.");
 
     	assert_next_rec!(
-	    p, "info.simple.zn.", 3600, RRClass::IN, RRType::MX, "mail.simple.zn.");
+	    p, "info.simple.zn.", 3600, RRClass::IN, RRType::MX,
+            "0", "mail.simple.zn.");
 
     	assert_next_rec!(
 	    p, "mail.simple.zn.", 3600, RRClass::IN, RRType::A, "1.2.3.4");
@@ -755,7 +804,7 @@ mod tests {
 	let mut p = ZoneParser::new(&file, "");
 
 	assert_next_rec!(
-	    p, "simple.zn.", 3600, RRClass::IN, RRType::SOA,
+	    p, "sImple.ZN.", 3600, RRClass::IN, RRType::SOA,
 	    "NS1.simple.zn.", "Hostmaster.Simple.Zn.",
 	    "2024090906", "7200", "1800", "86400", "7200");
 
@@ -773,25 +822,29 @@ mod tests {
 	assert!(optrr.is_some());
         rr = optrr.unwrap();
         assert!(rr.is_ok());
-	assert_eq!(p.absolute_name(&rr.unwrap().name), "simple.zn.");
+	assert_eq!(p.absolute_name(&rr.unwrap().name),
+                   Ok("simple.zn.".to_string()));
 
 	optrr = p.next();
 	assert!(optrr.is_some());
         rr = optrr.unwrap();
         assert!(rr.is_ok());
-	assert_eq!(p.absolute_name(&rr.unwrap().name), "simple.zn.");
+	assert_eq!(p.absolute_name(&rr.unwrap().name),
+                   Ok("simple.zn.".to_string()));
 
 	optrr = p.next();
 	assert!(optrr.is_some());
         rr = optrr.unwrap();
         assert!(rr.is_ok());
-	assert_eq!(p.absolute_name(&rr.unwrap().name), "info.simple.zn.");
+	assert_eq!(p.absolute_name(&rr.unwrap().name),
+                   Ok("info.simple.zn.".to_string()));
 
 	optrr = p.next();
 	assert!(optrr.is_some());
         rr = optrr.unwrap();
         assert!(rr.is_ok());
-	assert_eq!(p.absolute_name(&rr.unwrap().name), "mail.simple.zn.");
+	assert_eq!(p.absolute_name(&rr.unwrap().name),
+                   Ok("mail.simple.zn.".to_string()));
 
     	assert!(p.next().is_none());
     }
@@ -870,6 +923,10 @@ mod tests {
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,
             "\"", "\\foo", "foobar", "foo bar");
 
+        assert_next_rec!(
+	    p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,
+            "hello\\nworld");
+
         assert!(p.next().is_none());
     }
 
@@ -879,5 +936,29 @@ mod tests {
 	let mut p = ZoneParser::new(&file, "");
 
 	assert_eq!(p.next(), Some(Err("Bad quoting on line 1".to_string())));
+    }
+
+    #[test]
+    fn escape_error2() {
+	let file = File::open("./test_data/escape_error2.zn").unwrap();
+	let mut p = ZoneParser::new(&file, "");
+
+	assert_eq!(p.next(), Some(Err(
+            "Unexpected end of rdata on line 1 pos 27".to_string())));
+    }
+
+    #[test]
+    fn escaped_decimal() {
+	let file = File::open("./test_data/escaped_decimal.zn").unwrap();
+	let mut p = ZoneParser::new(&file, "");
+
+	assert_next_rec!(
+            p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,
+            "\\x03foo\\xbe\\xbfbar\\xffbaz");
+	assert_next_rec!(
+            p, "info.simple.zn.", 3600, RRClass::IN, RRType::MX,
+            "0", "mail.simple.dzn10.");
+	assert_eq!(p.next(), Some(Err(
+            "Invalid byte escaping on line 3".to_string())));
     }
 }
