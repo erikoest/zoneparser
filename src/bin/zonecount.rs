@@ -98,14 +98,14 @@ fn main() -> ExitCode {
     println!("");
     println!("RR:");
     for k in rr_count.keys() {
-        println!("  {:?}: {}", k, rr_count.get(k).unwrap());
+        println!("  {}: {}", k, rr_count.get(k).unwrap());
     }
     println!("  total: {}", rr_total);
 
     println!("");
     println!("RRSet:");
     for k in rrset_count.keys() {
-        println!("  {:?}: {}", k, rrset_count.get(k).unwrap());
+        println!("  {}: {}", k, rrset_count.get(k).unwrap());
     }
     println!("  total: {}", rrset_total);
 

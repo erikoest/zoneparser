@@ -81,7 +81,12 @@ pub enum RRType {
 
 impl Display for RRType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-	write!(f, "{:?}", self)
+        if self.name() == "Unknown" {
+                write!(f, "TYPE{}", self.discriminant())
+        }
+        else {
+	        write!(f, "{}", self.name())
+        }
     }
 }
 
