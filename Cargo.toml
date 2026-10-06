@@ -29,3 +29,5 @@ assets = [
 bstr = "1.10.0"
 diffs = "0.5.1"
 unit-enum = "1.4.3"
+base64 = "*"
+chrono = "*"

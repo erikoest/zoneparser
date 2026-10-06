@@ -503,6 +503,10 @@ fn main() -> ExitCode {
     let mut arg_count = 1;
 
     loop {
+        if args.len() <= arg_count {
+            break;
+        }
+
         match args[arg_count].as_str() {
             "-o" | "--origin" => {
                 origin = &args[arg_count + 1];
