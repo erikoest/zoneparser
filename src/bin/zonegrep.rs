@@ -1,6 +1,5 @@
 extern crate zoneparser;
 
-use std::fs::File;
 use std::env;
 use std::process::ExitCode;
 use std::collections::HashMap;
@@ -98,9 +97,7 @@ fn main() -> ExitCode {
         domain_todo.insert(origin.to_string(), true);
     }
 
-    let file = File::open(&args[arg_count]).unwrap();
-
-    let p = ZoneParser::new(&file, &origin);
+    let p = ZoneParser::new(&args[arg_count], &origin).unwrap();
 
     let rrtype = rr_str.into_iter()
         .map(|rrs|

@@ -1,6 +1,5 @@
 extern crate zoneparser;
 
-use std::fs::File;
 use std::env;
 use std::process::ExitCode;
 
@@ -115,8 +114,6 @@ fn main() -> ExitCode {
         origin = &args[arg_count];
     }
 
-    let file = File::open(&args[arg_count]).unwrap();
-
     let mut sig_stats: HashMap::<i32, SigData> = HashMap::new();
     let mut known_keys: Vec::<(i32, bool)> = vec!();
     let mut errors: Vec<String> = vec!();
@@ -124,7 +121,7 @@ fn main() -> ExitCode {
     let now_systime = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     let now: i32 = now_systime.as_secs() as i32;
 
-    let p = ZoneParser::new(&file, origin);
+    let p = ZoneParser::new(&args[arg_count], origin).unwrap();
 
     for result in p {
         match result {

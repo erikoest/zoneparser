@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufReader, BufRead};
+use std::io::{BufReader, BufRead, Read};
 use std::fmt::{Display, Debug, Formatter};
 use std::collections::HashMap;
 use bstr::ByteSlice;
@@ -189,8 +189,8 @@ enum ParserState {
     QString,
 }
 
-pub struct ZoneParser<'a> {
-    bufreader: BufReader<&'a File>,
+pub struct ZoneParser<R: Read> {
+    bufreader: BufReader<R>,
     line_no: usize,
 
     // Buffer for quoted strings
@@ -221,7 +221,7 @@ pub struct ZoneParser<'a> {
     rrtype_bm_hash: HashMap<String, (u8, u128, u128)>,
 }
 
-impl<'a> Iterator for ZoneParser<'a> {
+impl<R: Read> Iterator for ZoneParser<R> {
     type Item = Result<Record, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -246,9 +246,18 @@ impl<'a> Iterator for ZoneParser<'a> {
     }
 }
 
-impl<'a> ZoneParser<'a> {
-    pub fn new(file: &'a File, origin: &str) -> Self {
-	let buf = BufReader::new(file);
+impl ZoneParser<File> {
+    pub fn new(fname: &str, origin: &str) -> Result<Self, String> {
+        let file = File::open(fname).or(Err(
+            format!("Could not open file {}", fname)))?;
+
+        return Ok(Self::from_reader(file, origin));
+    }
+}
+
+impl<R: Read> ZoneParser<R> {
+    pub fn from_reader(reader: R, origin: &str) -> Self {
+	let buf = BufReader::new(reader);
 
         // Build some lookup tables for classes, types and type bitmaps
 	let mut classes = HashMap::new();
@@ -734,7 +743,6 @@ impl<'a> ZoneParser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
     use crate::zoneparser::{ZoneParser, Record, RecordData, RRClass, RRType};
 
     impl Record {
@@ -761,11 +769,10 @@ mod tests {
 	    );
 	}
     }
-    
+
     #[test]
     fn simple_zone() {
-	let file = File::open("./test_data/simple.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new("./test_data/simple.zn", "").unwrap();
 
 	assert_next_rec!(
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::SOA,
@@ -793,8 +800,7 @@ mod tests {
 
     #[test]
     fn directives() {
-	let file = File::open("./test_data/directives.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new("./test_data/directives.zn", "").unwrap();
 
 	assert!(p.next().is_some());
 
@@ -805,8 +811,7 @@ mod tests {
 
     #[test]
     fn case_insensitivity() {
-	let file = File::open("./test_data/lc_and_uc.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new("./test_data/lc_and_uc.zn", "").unwrap();
 
 	assert_next_rec!(
 	    p, "sImple.ZN.", 3600, RRClass::IN, RRType::SOA,
@@ -818,8 +823,7 @@ mod tests {
 
     #[test]
     fn relative_names() {
-	let file = File::open("./test_data/relative.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new("./test_data/relative.zn", "").unwrap();
         let mut optrr;
         let mut rr;
 
@@ -856,8 +860,7 @@ mod tests {
 
     #[test]
     fn default_values() {
-	let file = File::open("./test_data/directives.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new("./test_data/directives.zn", "").unwrap();
 
 	assert!(p.next().is_some());
 
@@ -872,8 +875,8 @@ mod tests {
 
     #[test]
     fn brackets_and_comments() {
-	let file = File::open("./test_data/brackets_and_comments.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new(
+            "./test_data/brackets_and_comments.zn", "").unwrap();
 
 	assert_next_rec!(
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::SOA,
@@ -885,8 +888,7 @@ mod tests {
 
     #[test]
     fn quotes() {
-	let file = File::open("./test_data/quotes.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new("./test_data/quotes.zn", "").unwrap();
 
         assert_next_rec!(
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,
@@ -897,8 +899,8 @@ mod tests {
 
     #[test]
     fn anonymous_type() {
-	let file = File::open("./test_data/anonymous_type.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new(
+            "./test_data/anonymous_type.zn", "").unwrap();
 
         assert_next_rec!(
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::Unknown(65535),
@@ -913,8 +915,8 @@ mod tests {
 
     #[test]
     fn escaped_data() {
-	let file = File::open("./test_data/escaped_data.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new(
+            "./test_data/escaped_data.zn", "").unwrap();
 
         assert_next_rec!(
 	    p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,
@@ -937,16 +939,16 @@ mod tests {
 
     #[test]
     fn escape_error() {
-	let file = File::open("./test_data/escape_error.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new(
+            "./test_data/escape_error.zn", "").unwrap();
 
 	assert_eq!(p.next(), Some(Err("Bad quoting on line 1".to_string())));
     }
 
     #[test]
     fn escape_error2() {
-	let file = File::open("./test_data/escape_error2.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new(
+            "./test_data/escape_error2.zn", "").unwrap();
 
 	assert_eq!(p.next(), Some(Err(
             "Unexpected end of rdata on line 1 pos 27".to_string())));
@@ -954,8 +956,8 @@ mod tests {
 
     #[test]
     fn escaped_decimal() {
-	let file = File::open("./test_data/escaped_decimal.zn").unwrap();
-	let mut p = ZoneParser::new(&file, "");
+	let mut p = ZoneParser::new(
+            "./test_data/escaped_decimal.zn", "").unwrap();
 
 	assert_next_rec!(
             p, "simple.zn.", 3600, RRClass::IN, RRType::TXT,

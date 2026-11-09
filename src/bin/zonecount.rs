@@ -1,6 +1,5 @@
 extern crate zoneparser;
 
-use std::fs::File;
 use std::env;
 use std::process::ExitCode;
 
@@ -38,8 +37,6 @@ fn main() -> ExitCode {
         origin = &args[arg_count];
     }
 
-    let file = File::open(&args[arg_count]).unwrap();
-
     let mut rr_count: HashMap::<RRType, u32> = HashMap::new();
     let mut rrset_count: HashMap::<RRType, u32> = HashMap::new();
     let mut rr_total = 0;
@@ -50,7 +47,7 @@ fn main() -> ExitCode {
      */
     let mut last_names: HashMap::<RRType, String> = HashMap::new();
 
-    let p = ZoneParser::new(&file, origin);
+    let p = ZoneParser::new(&args[arg_count], origin).unwrap();
 
     for result in p {
         match result {

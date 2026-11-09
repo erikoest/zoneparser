@@ -202,8 +202,8 @@ impl Diff for SetDiffer {
     }
 }
 
-struct Ring<'a> {
-    parser: ZoneParser<'a>,
+struct Ring {
+    parser: ZoneParser<File>,
     data: Vec<RecordSet>,
     tail: usize,
     head: usize,
@@ -214,11 +214,11 @@ struct Ring<'a> {
     last: Option<RecordSet>,
 }
 
-impl<'a> Ring<'a> {
-    fn new(file: &'a File, origin: &str, buf_size: usize,
-           ignore_serial: bool, skip_dnssec: bool) -> Self {
-        Self {
-            parser: ZoneParser::new(&file, origin),
+impl Ring {
+    fn new(fname: &str, origin: &str, buf_size: usize,
+           ignore_serial: bool, skip_dnssec: bool) -> Result<Self, String> {
+        Ok(Self {
+            parser: ZoneParser::new(fname, origin)?,
             data: vec!(),
             tail: 0,
             head: 0,
@@ -227,7 +227,7 @@ impl<'a> Ring<'a> {
             skip_dnssec: skip_dnssec,
             at_end: false,
             last: None,
-        }
+        })
     }
 
     fn read_zone_records(&mut self) -> Result<(), String> {
@@ -315,7 +315,7 @@ impl<'a> Ring<'a> {
     }
 }
 
-impl<'a> Index<usize> for Ring<'a> {
+impl Index<usize> for Ring {
     type Output = RecordSet;
 
     fn index(&self, i: usize) -> &Self::Output {
@@ -323,24 +323,25 @@ impl<'a> Index<usize> for Ring<'a> {
     }
 }
 
-struct Differ<'a> {
-    old: Ring<'a>,
-    new: Ring<'a>,
+struct Differ {
+    old: Ring,
+    new: Ring,
     count: HashMap<RRType, HashMap<String, usize>>,
     verbose: bool,
 }
 
-impl<'a> Differ<'a> {
-    fn new(oldfile: &'a File, newfile: &'a File, origin: &str, buf_size: usize,
-               ignore_serial: bool, skip_dnssec: bool, verbose: bool) -> Self {
-        Self {
-            old: Ring::new(&oldfile, origin, buf_size, ignore_serial,
-                           skip_dnssec),
-            new: Ring::new(&newfile, origin, buf_size, ignore_serial,
-                           skip_dnssec),
+impl Differ {
+    fn new(oldfile: &str, newfile: &str, origin: &str, buf_size: usize,
+           ignore_serial: bool, skip_dnssec: bool, verbose: bool)
+           -> Result<Self, String> {
+        Ok(Self {
+            old: Ring::new(oldfile, origin, buf_size, ignore_serial,
+                           skip_dnssec)?,
+            new: Ring::new(newfile, origin, buf_size, ignore_serial,
+                           skip_dnssec)?,
             count: HashMap::new(),
             verbose: verbose,
-        }
+        })
     }
 
     fn increment(&mut self, k1: RRType, k2: &str) {
@@ -542,13 +543,16 @@ fn main() -> ExitCode {
         origin = &args[arg_count];
     }
 
-    let oldfile = File::open(&args[arg_count]).expect(
-        &format!("Could not open file {}", &args[arg_count]));
-    let newfile = File::open(&args[arg_count + 1]).expect(
-        &format!("Could not open file {}", &args[arg_count + 1]));
+    let mut differ = match Differ::new(&args[arg_count], &args[arg_count + 1],
+                                       origin, buf_size, ignore_serial,
+                                       skip_dnssec, verbose) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{}", e);
+            return 255.into();
+        },
+    };
 
-    let mut differ = Differ::new(&oldfile, &newfile, origin, buf_size,
-                                 ignore_serial, skip_dnssec, verbose);
     if let Err(e) = differ.compare() {
         println!("Parse error: {}", e);
         return 255.into();
